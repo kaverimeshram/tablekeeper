@@ -1,0 +1,27 @@
+manifest_version: 2
+name: tablekeeper
+version: "0.1.0"
+requires_hermes: ">=0.23.0"
+description: Code-authoritative tabletop RPG campaigns for Hermes group chats.
+author: geniusamansingh
+license: CC-BY-4.0
+provides_tools:
+  - tk_state
+  - tk_roll
+  - tk_check
+  - tk_attack
+  - tk_cast
+  - tk_damage
+  - tk_start_combat
+  - tk_next_turn
+  - tk_monster_turn
+  - tk_rest
+  - tk_condition
+  - tk_death_save
+  - tk_claim_character
+provides_hooks:
+  - pre_llm_call
+  - post_tool_call
+  - transform_llm_output
+provides_commands:
+  - table
