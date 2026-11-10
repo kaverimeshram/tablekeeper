@@ -615,12 +615,12 @@ function figure(radius = 0.43, k = 1) {
 function biped(b, o) {
   const { legs = ART.leather, torso = ART.leather, tf = 0, skin = ART.skin, arm = torso, af = tf, lean = 0, thick = 1, head = 0.15 } = o
   for (const s of [-1, 1]) {
-    b.bar([s * 0.1 * thick, 0, 0], [s * 0.1 * thick, 0.44, 0], 0.075 * thick, 0.065 * thick, legs)
+    b.bar([s * 0.1 * thick, 0, 0], [s * 0.1 * thick, 0.44, 0], 0.095 * thick, 0.082 * thick, legs)
     b.add(box(0.14 * thick, 0.08, 0.22), shade(legs, 0.6), 0, [s * 0.1 * thick, 0.04, 0.04])
   }
   b.add(lathe([[0, 0], [0.17 * thick, 0], [0.2 * thick, 0.1], [0.235 * thick, 0.28], [0.2 * thick, 0.38], [0.11, 0.44], [0, 0.44]], 10), torso, tf, [0, 0.4, 0], [lean, 0, 0])
   for (const s of [-1, 1]) {
-    b.bar([s * 0.25 * thick, 0.8, lean * 0.1], [s * 0.31 * thick, 0.5, 0.1 + lean * 0.5], 0.058 * thick, 0.046 * thick, arm, af)
+    b.bar([s * 0.25 * thick, 0.8, lean * 0.1], [s * 0.31 * thick, 0.5, 0.1 + lean * 0.5], 0.074 * thick, 0.06 * thick, arm, af)
     b.add(sphere(0.058, 8, 5), skin, 0, [s * 0.31 * thick, 0.47, 0.1 + lean * 0.5])
   }
   const h = [0, 0.99 + lean * 0.05, lean * 0.18]
@@ -840,10 +840,13 @@ const miniCache = new Map()
 /** Merged vertex data for a look, plus the base radius used for its ring and shadow. */
 export function buildMini(look) {
   if (miniCache.has(look)) return miniCache.get(look)
-  const radius = MINI_BASE[look] || 0.43
+  const radius = Math.min((MINI_BASE[look] || 0.43) * 1.12, look === 'ogre' || look === 'dire_wolf' ? 0.72 : 0.5) / MINI_XZ
   const b = figure(radius, MINI_SCALE[look] || 1)
   ;(MINI_BUILDERS[look] || MINI_BUILDERS.generic)(b)
-  const out = { ...combine(b.parts), radius, look }
+  const mesh = combine(b.parts)
+  let top = 0
+  for (let k = 1; k < mesh.v.length; k += 12) top = Math.max(top, mesh.v[k])
+  const out = { ...mesh, radius, look, top }
   miniCache.set(look, out)
   return out
 }
@@ -865,7 +868,7 @@ const SURF_FS = `
 varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vF; varying vec2 vUV; varying vec4 vL;
 uniform vec3 uCam; uniform vec3 uSun; uniform vec3 uSunCol; uniform vec3 uSky; uniform vec3 uGround; uniform vec3 uFog; uniform float uFogD;
 uniform vec3 uTeam; uniform vec3 uGlow; uniform vec4 uFlash; uniform float uDesat; uniform float uTexMode;
-uniform float uShine; uniform float uSpec; uniform vec3 uBody; uniform vec3 uInk;
+uniform float uShine; uniform float uSpec; uniform vec3 uBody; uniform vec3 uInk; uniform float uRim;
 uniform vec4 uPL0; uniform vec4 uPL1; uniform vec3 uPLCol; uniform vec2 uTexel; uniform float uShadowOn;
 uniform sampler2D uTex; uniform sampler2D uShadow;
 float unpackD(vec4 c){ return dot(c, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0)); }
@@ -906,8 +909,8 @@ void main(){
   float ks = metal > 0.5 ? 0.85 : (lacq > 0.5 ? 0.5 : uSpec);
   vec3 H = normalize(uSun + V);
   vec3 spec = uSunCol * pow(max(dot(N, H), 0.0), shin) * ks * sh * pool;
-  float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-  vec3 col = alb * diff + spec + uSky * rim * 0.16;
+  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.4);
+  vec3 col = alb * diff + spec + mix(uSky, vec3(1.0, 0.78, 0.55), 0.55) * rim * uRim;
   if (metal > 0.5) { vec3 rf = reflect(-V, N); col = mix(col, alb * mix(uGround * 1.5, uSky * 2.2, rf.y * 0.5 + 0.5) + spec, 0.55); }
   col += uGlow;
   if (glow > 0.5 || tglow > 0.5) col = alb * 1.9;
@@ -1116,31 +1119,68 @@ const SUN = vnorm([-0.5, 0.82, -0.3])
 const CANDLES = [[-7.9, -6.2], [7.8, -6.0]]
 const FOV = (38 * Math.PI) / 180
 const SHADOW_SIZE = 2048
-const MINI_SCALE_UP = 1.12
-const HOME = { az: 0, el: 0.74, zoom: 1 }
+export const MINI_SCALE_UP = 1.8
+const MINI_GIRTH = 1.1
+export const MINI_XZ = MINI_SCALE_UP * MINI_GIRTH
+const footR = geo => geo.radius * MINI_XZ
+export const HOME_EL = 0.5
+const HOME = { az: 0, el: HOME_EL, zoom: 1 }
 const TONE_VARS = ['bg-editor', 'bg-elevated', 'red', 'green', 'yellow', 'blue', 'purple', 'cyan', 'orange', 'accent', 'accent-secondary', 'text-primary', 'text-secondary']
 const TONE_FALLBACK = { 'bg-editor': [0.1, 0.1, 0.12], 'bg-elevated': [0.16, 0.16, 0.19], red: [0.9, 0.3, 0.3], green: [0.35, 0.78, 0.45], yellow: [0.95, 0.8, 0.3], blue: [0.35, 0.55, 0.95], purple: [0.65, 0.45, 0.9], cyan: [0.35, 0.8, 0.85], orange: [0.95, 0.6, 0.3], accent: [0.45, 0.6, 1], 'accent-secondary': [0.9, 0.5, 0.8], 'text-primary': [0.95, 0.95, 0.95], 'text-secondary': [0.7, 0.7, 0.75] }
 
-const FIT_POINTS = [[-7.1, 0.2, -6.1], [7.1, 0.2, -6.1], [-7.1, 0.2, 6.1], [7.1, 0.2, 6.1], [-4.4, 0.5, 6.35 + 3.0], [4.4, 0.5, 6.35 + 3.0], [-4.4, 0.5, 10.0], [4.4, 0.5, 10.0], [-6, 1.9, -5], [6, 1.9, -5]]
-const FIT_TARGET = [0, 0.4, 2.2]
 export const SWAY_AZ = 0.3
-/** Idle drift swings the board's corners past the home framing; pull back in proportion to the swing. */
+/** Idle drift swings the framed squares past the home framing; pull back in proportion to the swing. */
 export const swayDistance = (base, dAz) => base * (1 + 0.5 * Math.abs(dAz))
+const FELT = [6.5, 5.5]
+const HEAD = 0.16 + 1.8 * 1.4
 const fitMemo = new Map()
-/** Camera distance that frames the felt, the minis' height and the dice tray at the home angle for a given aspect ratio. */
-export function fitDistance(aspect, el = HOME.el) {
-  const key = `${aspect.toFixed(3)}:${el}`
+/** The home shot: the occupied squares plus one ring of empty ones, at the low angle, as close as the pane allows. An empty table frames the whole felt. */
+export function homeFrame(cells, aspect, el = HOME_EL) {
+  const key = `${aspect.toFixed(3)}:${el}:${cells.map(c => c.join(',')).join(';')}`
   if (fitMemo.has(key)) return fitMemo.get(key)
+  const live = cells.filter(c => Number.isFinite(c[0]) && Number.isFinite(c[1]))
+  const xs = live.length ? live.map(c => c[0]) : [-FELT[0], FELT[0]], zs = live.length ? live.map(c => c[1]) : [-FELT[1], FELT[1]]
+  const ring = live.length ? 1.5 : 0
+  let x0 = Math.min(...xs) - ring, x1 = Math.max(...xs) + ring, z0 = Math.min(...zs) - ring, z1 = Math.max(...zs) + ring
+  const grow = (lo, hi, least) => { const mid = (lo + hi) / 2, half = Math.max((hi - lo) / 2, least); return [mid - half, mid + half] }
+  ;[x0, x1] = grow(x0, x1, 3.2); [z0, z1] = grow(z0, z1, 2.6)
+  x0 = Math.max(x0, -FELT[0]); x1 = Math.min(x1, FELT[0]); z0 = Math.max(z0, -FELT[1]); z1 = Math.min(z1, FELT[1])
+  const target = [(x0 + x1) / 2, 0.6, (z0 + z1) / 2]
+  const pts = [[x0, 0.2, z0], [x1, 0.2, z0], [x0, 0.2, z1], [x1, 0.2, z1]]
+  for (const c of live) pts.push([c[0], HEAD, c[1]])
+  if (!live.length) pts.push([x0, HEAD, z0], [x1, HEAD, z0])
   const proj = m4persp(FOV, aspect, 0.5, 140)
   const inside = d => {
-    const m = m4mul(proj, m4look(orbitEye(FIT_TARGET, 0, el, d), FIT_TARGET))
-    return FIT_POINTS.every(p => { const c = m4xf(m, p); return c[3] > 0 && Math.abs(c[0] / c[3]) <= 0.97 && Math.abs(c[1] / c[3]) <= 0.95 })
+    const m = m4mul(proj, m4look(orbitEye(target, 0, el, d), target))
+    return pts.every(p => { const c = m4xf(m, p); return c[3] > 0 && Math.abs(c[0] / c[3]) <= 0.9 && Math.abs(c[1] / c[3]) <= 0.86 })
   }
-  let lo = 4, hi = 90
+  let lo = 3, hi = 120
   for (let k = 0; k < 22; k++) { const mid = (lo + hi) / 2; if (inside(mid)) hi = mid; else lo = mid }
-  if (fitMemo.size > 20) fitMemo.clear()
-  fitMemo.set(key, hi)
-  return hi
+  const out = { target, dist: hi }
+  if (fitMemo.size > 40) fitMemo.clear()
+  fitMemo.set(key, out)
+  return out
+}
+
+/** The corner inset that shows the dice tray close up, in canvas CSS pixels; k eases 0 (resting) to 1 (a die is in the air). */
+export function insetRect(w, h, k) {
+  const m = 14
+  const rest = clamp(w * 0.3, 150, 460)
+  const big = Math.min(rest * 1.65, w * 0.5)
+  const iw = Math.min(rest + (big - rest) * clamp(k, 0, 1), w - 2 * m), ih = iw * 0.72
+  return { x: w - m - iw, y: m, w: iw, h: Math.min(ih, h - 2 * m) }
+}
+/** Fixed camera for the inset: high enough to read the faces, wide enough for the flight in from the near-right edge. */
+export function insetView(aspect) {
+  const target = [TRAY.x + 0.6, TRAY.floor, TRAY.z + 0.2]
+  return { target, eye: orbitEye(target, 0.35, 1.05, 8.2 / Math.min(1, aspect / (4 / 3))), fov: FOV }
+}
+
+/** `?cinematic=1` in the address, or `cinematic=1` after the hash route, starts the full-bleed recording view. */
+export function wantsCinematic(search = '', hash = '') {
+  const on = q => /^(?:1|true)$/i.test(new URLSearchParams(q).get('cinematic') ?? '')
+  const at = String(hash).indexOf('?')
+  return on(String(search)) || (at >= 0 && on(String(hash).slice(at)))
 }
 
 /** Dice for a roll: sides from the formula, value from the engine; anything unreadable is dropped, never invented. */
@@ -1337,7 +1377,9 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     time: 0, minis: new Map(), chat: undefined, seq: -1, queue: [], actions: [], dice: [], nextAt: 0, floats: [], shots: [], active: '', combat: false,
     caption: null, hover: '', tray: null, frames: 0, fpsAt: 0, fps: 0, cpu: 0
   }
-  const cam = { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, tz: 2.2, cur: { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, tz: 2.2 }, lastInput: -100, aspect: 1.6 }
+  const cam = { az: HOME.az, el: HOME.el, zoom: HOME.zoom, home: homeFrame([], 1.6), cells: [], cur: { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, ty: 0.6, tz: 0, dist: 0 }, lastInput: -100, aspect: 1.6 }
+  cam.cur.tx = cam.home.target[0]; cam.cur.ty = cam.home.target[1]; cam.cur.tz = cam.home.target[2]; cam.cur.dist = cam.home.dist
+  const rehome = () => { cam.home = homeFrame(cam.cells, cam.aspect) }
   let vp = m4look([0, 5, 5], [0, 0, 0]), view = vp, eyePos = [0, 5, 5], size = [2, 2], dpr = 1
 
   const makeEl = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e }
@@ -1496,6 +1538,9 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     for (const key of [...S.minis.keys()]) if (!seen.has(key)) S.minis.delete(key)
     S.active = model.activeKey
     S.combat = model.combat
+    cam.cells = model.creatures.filter(c => c.pos).map(c => cellWorld(c.pos[0], c.pos[1]))
+    rehome()
+    if (first) { cam.cur.tx = cam.home.target[0]; cam.cur.ty = cam.home.target[1]; cam.cur.tz = cam.home.target[2]; cam.cur.dist = cam.home.dist }
     if (S.seq < 0 && !newRolls.length && model.rolls.length) {
       const last = model.rolls[model.rolls.length - 1]
       S.seq = last.seq
@@ -1537,12 +1582,12 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     m.yaw += d * (1 - Math.exp(-dt * 9))
     m.fall += (m.fallGoal - m.fall) * (1 - Math.exp(-dt * (m.fallGoal > m.fall ? 7 : 5)))
     const f = m.fall
-    const radius = m.geo.radius * MINI_SCALE_UP
+    const radius = footR(m.geo)
     const breathe = 1 + Math.sin(t * 1.7 + m.phase) * 0.012 * (1 - f)
     const q = qmul(qaxis([0, 1, 0], m.yaw), qaxis([1, 0, 0], -f * 1.42))
     const lift = Math.sin(f * 1.42) * radius * 0.92
     const y = BOARD_Y + dy + lift
-    m.model = m4trs([m.pos[0] + dx, y, m.pos[1] + dz], q, [MINI_SCALE_UP, MINI_SCALE_UP * breathe, MINI_SCALE_UP])
+    m.model = m4trs([m.pos[0] + dx, y, m.pos[1] + dz], q, [MINI_XZ, MINI_SCALE_UP * breathe, MINI_XZ])
     m.eyeAt = [m.pos[0] + dx, BOARD_Y + (m.geo.top || 1.2) * MINI_SCALE_UP * (1 - f * 0.8) + dy + 0.12, m.pos[1] + dz]
     m.ground = [m.pos[0] + dx, m.pos[1] + dz]
     if (m.pending && t - m.pending > 6) commit(m)
@@ -1565,12 +1610,14 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const sway = clamp((idle - 5) / 2.5, 0, 1)
     const k = 1 - Math.exp(-dt * 7)
     for (const key of ['az', 'el', 'zoom']) cam.cur[key] += (cam[key] - cam.cur[key]) * k
-    cam.cur.tx += (cam.tx - cam.cur.tx) * k; cam.cur.tz += (cam.tz - cam.cur.tz) * k
+    const kh = 1 - Math.exp(-dt * 2.6)
+    cam.cur.tx += (cam.home.target[0] - cam.cur.tx) * kh; cam.cur.ty += (cam.home.target[1] - cam.cur.ty) * kh; cam.cur.tz += (cam.home.target[2] - cam.cur.tz) * kh
+    cam.cur.dist += (cam.home.dist - cam.cur.dist) * kh
     const swing = Math.sin(S.time * 0.16) * SWAY_AZ * sway
     const az = cam.cur.az + swing
     const el = clamp(cam.cur.el + Math.sin(S.time * 0.1 + 1) * 0.07 * sway, 0.3, 1.45)
-    const dist = swayDistance(fitDistance(cam.aspect), swing) * cam.cur.zoom * (1 + Math.sin(S.time * 0.07) * 0.04 * sway)
-    const target = [cam.cur.tx, 0.4, cam.cur.tz]
+    const dist = swayDistance(cam.cur.dist, swing) * cam.cur.zoom * (1 + Math.sin(S.time * 0.07) * 0.04 * sway)
+    const target = [cam.cur.tx, cam.cur.ty, cam.cur.tz]
     eyePos = orbitEye(target, az, el, dist)
     view = m4look(eyePos, target)
     vp = m4mul(m4persp(FOV, cam.aspect, 0.5, 140), view)
@@ -1581,11 +1628,11 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   const lightEye = vadd([0, 0, 1.6], vmul(SUN, 24))
   const lvp = m4mul(m4ortho(-12.5, 12.5, -12.5, 12.5, 1, 52), m4look(lightEye, [0, 0, 1.6]))
   let pl0 = [0, 0, 0, 0], pl1 = [0, 0, 0, 0]
-  const D0 = { team: [1, 1, 1], glow: [0, 0, 0], flash: [0, 0, 0, 0], desat: 0, tex: null, mode: 0, spec: 0.1, shine: 14, body: [1, 1, 1], ink: [0, 0, 0] }
+  const D0 = { rim: 0.16, team: [1, 1, 1], glow: [0, 0, 0], flash: [0, 0, 0, 0], desat: 0, tex: null, mode: 0, spec: 0.1, shine: 14, body: [1, 1, 1], ink: [0, 0, 0] }
   const drawSurf = (g, model, o = D0) => {
     const d = o === D0 ? o : { ...D0, ...o }
     surf.m('uModel', model); surf.v3('uTeam', d.team); surf.v3('uGlow', d.glow); surf.v4('uFlash', d.flash); surf.f('uDesat', d.desat)
-    surf.f('uTexMode', d.tex ? d.mode : 0); surf.f('uSpec', d.spec); surf.f('uShine', d.shine); surf.v3('uBody', d.body); surf.v3('uInk', d.ink)
+    surf.f('uTexMode', d.tex ? d.mode : 0); surf.f('uSpec', d.spec); surf.f('uShine', d.shine); surf.v3('uBody', d.body); surf.v3('uInk', d.ink); surf.f('uRim', d.rim)
     if (d.tex) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, d.tex) }
     bindGeo(g)
     gl.drawElements(gl.TRIANGLES, g.n, gl.UNSIGNED_SHORT, 0)
@@ -1645,7 +1692,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       const flashK = m.flash ? clamp(1 - (S.time - m.flash.t) / 0.7, 0, 1) : 0
       const col = m.tone ? toneOf(m.tone) : toneOf('red')
       const dead = m.v.state === 'dead'
-      drawSurf(m.geo, m.model, { team: col, flash: flashK > 0 ? [m.flash.tint[0], m.flash.tint[1], m.flash.tint[2], flashK * m.flash.strength] : D0.flash, desat: dead ? 0.92 : m.v.state === 'down' ? 0.45 : 0, glow: m.key === S.active ? [0.03, 0.03, 0.05] : D0.glow })
+      drawSurf(m.geo, m.model, { team: col, flash: flashK > 0 ? [m.flash.tint[0], m.flash.tint[1], m.flash.tint[2], flashK * m.flash.strength] : D0.flash, rim: dead ? 0.3 : 1.15, desat: dead ? 0.92 : m.v.state === 'down' ? 0.45 : 0, glow: m.key === S.active ? [0.03, 0.03, 0.05] : D0.glow })
       // condition gems, concentration halo, death-save pips
       const c = m.c, top = BOARD_Y + (m.geo.top || 1.2) * MINI_SCALE_UP + 0.3
       c.conditions.slice(0, 4).forEach((cond, k, all) => {
@@ -1678,7 +1725,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     decal.use(); decal.m('uVP', vp); decal.f('uTime', S.time)
     for (const m of S.minis.values()) {
-      const r = m.geo.radius * MINI_SCALE_UP, fl = 1 - m.fall
+      const r = footR(m.geo), fl = 1 - m.fall
       drawDecal(flat(m.ground[0], BOARD_Y + 0.005, m.ground[1], r * (1.45 + m.fall * 0.4)), 0, [0.02, 0.01, 0.01], 0.55 * (0.4 + 0.6 * fl))
       const dead = m.v.state === 'dead'
       drawDecal(flat(m.ground[0], BOARD_Y + 0.008, m.ground[1], r * 1.2), 1, dead ? mixRgb(toneOf('text-secondary'), toneOf('bg-elevated'), 0.5) : hpColor(m.v.frac), dead ? 0.55 : 0.95, clamp(m.vf ?? m.v.frac, 0, 1))
@@ -1694,8 +1741,8 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const act = S.minis.get(S.active)
     if (act) {
       const a = toneOf('accent')
-      drawDecal(flat(act.ground[0], BOARD_Y + 0.01, act.ground[1], act.geo.radius * MINI_SCALE_UP * 1.9), 2, a, 0.9)
-      beamP.use(); beamP.m('uVP', vp); beamP.m('uModel', m4trs([act.ground[0], BOARD_Y, act.ground[1]], [0, 0, 0, 1], [(act.geo.radius * MINI_SCALE_UP) / 0.43, 1, (act.geo.radius * MINI_SCALE_UP) / 0.43])); beamP.m('uLVP', lvp)
+      drawDecal(flat(act.ground[0], BOARD_Y + 0.01, act.ground[1], footR(act.geo) * 1.9), 2, a, 0.9)
+      beamP.use(); beamP.m('uVP', vp); beamP.m('uModel', m4trs([act.ground[0], BOARD_Y, act.ground[1]], [0, 0, 0, 1], [footR(act.geo) / 0.43, 1, footR(act.geo) / 0.43])); beamP.m('uLVP', lvp)
       beamP.v3('uCam', eyePos); beamP.v3('uGlow', a); beamP.f('uA', 0.5 + 0.1 * Math.sin(S.time * 2.4))
       bindGeo(beamG); gl.drawElements(gl.TRIANGLES, beamG.n, gl.UNSIGNED_SHORT, 0)
       decal.use()
@@ -1782,7 +1829,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   offs.push(ctx.addEventListener(canvas, 'pointerup', end), ctx.addEventListener(canvas, 'pointercancel', end))
   offs.push(ctx.addEventListener(canvas, 'pointerleave', () => { S.hover = '' }))
   offs.push(ctx.addEventListener(canvas, 'wheel', e => { e.preventDefault(); cam.zoom = clamp(cam.zoom * Math.exp(e.deltaY * 0.0012), 0.42, 1.6); poke() }, { passive: false }))
-  offs.push(ctx.addEventListener(canvas, 'dblclick', () => { Object.assign(cam, { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, tz: 2.2 }); poke() }))
+  offs.push(ctx.addEventListener(canvas, 'dblclick', () => { Object.assign(cam, { az: HOME.az, el: HOME.el, zoom: HOME.zoom }); rehome(); poke() }))
   offs.push(ctx.addEventListener(canvas, 'webglcontextlost', e => { e.preventDefault(); stop(); hooks.onFail?.(new Error('WebGL context lost')) }))
 
   // ---------------------------------------------------------------- loop, sizing, visibility
@@ -1820,6 +1867,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h }
     size = [r.width, r.height]
     cam.aspect = w / h
+    rehome()
   }
   fit()
   const ro = new ResizeObserver(() => { fit(); if (!running) start() })
