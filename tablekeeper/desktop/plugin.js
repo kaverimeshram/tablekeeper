@@ -1123,6 +1123,9 @@ const TONE_FALLBACK = { 'bg-editor': [0.1, 0.1, 0.12], 'bg-elevated': [0.16, 0.1
 
 const FIT_POINTS = [[-7.1, 0.2, -6.1], [7.1, 0.2, -6.1], [-7.1, 0.2, 6.1], [7.1, 0.2, 6.1], [-4.4, 0.5, 6.35 + 3.0], [4.4, 0.5, 6.35 + 3.0], [-4.4, 0.5, 10.0], [4.4, 0.5, 10.0], [-6, 1.9, -5], [6, 1.9, -5]]
 const FIT_TARGET = [0, 0.4, 2.2]
+export const SWAY_AZ = 0.3
+/** Idle drift swings the board's corners past the home framing; pull back in proportion to the swing. */
+export const swayDistance = (base, dAz) => base * (1 + 0.5 * Math.abs(dAz))
 const fitMemo = new Map()
 /** Camera distance that frames the felt, the minis' height and the dice tray at the home angle for a given aspect ratio. */
 export function fitDistance(aspect, el = HOME.el) {
@@ -1563,9 +1566,10 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const k = 1 - Math.exp(-dt * 7)
     for (const key of ['az', 'el', 'zoom']) cam.cur[key] += (cam[key] - cam.cur[key]) * k
     cam.cur.tx += (cam.tx - cam.cur.tx) * k; cam.cur.tz += (cam.tz - cam.cur.tz) * k
-    const az = cam.cur.az + Math.sin(S.time * 0.16) * 0.52 * sway
+    const swing = Math.sin(S.time * 0.16) * SWAY_AZ * sway
+    const az = cam.cur.az + swing
     const el = clamp(cam.cur.el + Math.sin(S.time * 0.1 + 1) * 0.07 * sway, 0.3, 1.45)
-    const dist = fitDistance(cam.aspect) * cam.cur.zoom * (1 + Math.sin(S.time * 0.07) * 0.04 * sway)
+    const dist = swayDistance(fitDistance(cam.aspect), swing) * cam.cur.zoom * (1 + Math.sin(S.time * 0.07) * 0.04 * sway)
     const target = [cam.cur.tx, 0.4, cam.cur.tz]
     eyePos = orbitEye(target, az, el, dist)
     view = m4look(eyePos, target)

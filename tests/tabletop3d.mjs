@@ -1,7 +1,7 @@
 // Pure-math checks for the 3D tabletop. Imports the real plugin.js (React and the SDK shimmed) and prints
 // { check: [failures] }. Nothing here touches a DOM or a GL context.
 import {
-  DIE_SIDES, MINI_LOOKS, box, buildMini, combine, cone, cyl, diceOf, diceShape, dieMesh, faceUpQuat, fitDistance, lathe, lookOf,
+  DIE_SIDES, MINI_LOOKS, box, buildMini, combine, cone, cyl, diceOf, diceShape, dieMesh, faceUpQuat, fitDistance, SWAY_AZ, swayDistance, lathe, lookOf,
   m4look, m4mul, m4persp, orbitEye, project, qrot, seeded, sphere, throwPlan, throwPose, topValue, torus, trayLayout, cellWorld, stagedWorld, xf
 } from './plugin.mjs'
 
@@ -99,6 +99,19 @@ check('camera_fit_frames_board_and_tray_at_every_aspect', fail => {
       const s = project(p, m, 1000, 1000)
       const nx = s.x / 500 - 1
       if (!s.ok || Math.abs(nx) > 1 || s.y < 0 || s.y > 1000) fail(`aspect ${aspect}: corner ${p} falls outside at distance ${d}`)
+    }
+  }
+})
+
+check('idle_sway_never_pushes_the_board_out_of_frame', fail => {
+  for (const aspect of [1.8, 1.45, 1.1]) {
+    for (const az of [-SWAY_AZ, -SWAY_AZ / 2, SWAY_AZ / 2, SWAY_AZ]) {
+      const d = swayDistance(fitDistance(aspect), az)
+      const m = m4mul(m4persp((38 * Math.PI) / 180, aspect, 0.5, 140), m4look(orbitEye([0, 0.4, 2.2], az, 0.74, d), [0, 0.4, 2.2]))
+      for (const p of [[-7.05, 0, -6.05], [7.05, 0, -6.05], [-7.05, 0, 6.05], [7.05, 0, 6.05], [-4.4, 0.3, 10], [4.4, 0.3, 10]]) {
+        const s = project(p, m, 1000, 1000)
+        if (!s.ok || Math.abs(s.x / 500 - 1) > 1 || s.y < 0 || s.y > 1000) fail(`aspect ${aspect}, sway ${az.toFixed(2)}: corner ${p} leaves the frame`)
+      }
     }
   }
 })

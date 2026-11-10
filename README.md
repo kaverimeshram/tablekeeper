@@ -4,11 +4,11 @@ Tabletop campaigns in a Hermes chat where code rolls every die and the model onl
 
 ![Tablekeeper architecture: players to the Hermes gateway to the model, tk_ tools, the rules engine and a per-chat SQLite store, with state injection, a narration guard and a read-only Desktop pane](docs/architecture.svg)
 
-![Tablekeeper Desktop page: battle grid, initiative and dice tray](docs/pane.png)
+![Tablekeeper Desktop page: a lit 3D tabletop with painted miniatures, a dice tray that shows the rolled face, initiative and the combat log](docs/tabletop-3d.png)
 
 ## What it does
 
-Tablekeeper turns a Hermes chat into a table for a D&D 5e style campaign. Python owns hit points, positions, initiative and turn order, and the model calls `tk_` tools and narrates what comes back. Each player controls only the character they claimed, and in combat only on that character's turn. Monsters play their own turns from SRD 5.1 stat blocks the moment a player ends theirs. A narration guard appends a visible correction when the model states a number no tool produced. The Desktop Tabletop pane draws the battle grid, initiative order and dice tray from the same campaign database, read-only.
+Tablekeeper turns a Hermes chat into a table for a D&D 5e style campaign. Python owns hit points, positions, initiative and turn order, and the model calls `tk_` tools and narrates what comes back. Each player controls only the character they claimed, and in combat only on that character's turn. Monsters play their own turns from SRD 5.1 stat blocks the moment a player ends theirs. A narration guard appends a visible correction when the model states a number no tool produced. The Desktop Tabletop page renders the same campaign database, read-only, as a lit 3D table: painted miniatures glide square to square, lunge when they attack and flash with every point of damage, and each die in the tray lands on the exact face Python rolled.
 
 ## A real turn
 

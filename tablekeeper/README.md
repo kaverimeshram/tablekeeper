@@ -2,7 +2,7 @@
 
 Tablekeeper turns a Hermes chat into a tabletop campaign table. Python rolls every die and owns hit points, positions, initiative and turn order, so the model narrates results it cannot change. Each player controls only the character they claimed, and in combat only on that character's turn. Monsters play their own turns, from SRD 5.1 stat blocks, the moment a player ends theirs.
 
-![Tablekeeper Desktop page: battle grid, initiative and dice tray](https://raw.githubusercontent.com/kaverimeshram/tablekeeper/main/docs/pane.png)
+![Tablekeeper Desktop page: a lit 3D tabletop with painted miniatures, a dice tray that shows the rolled face, initiative and the combat log](https://raw.githubusercontent.com/kaverimeshram/tablekeeper/main/docs/tabletop-3d.png)
 
 ```text
 You:      /table new The Goblin Cave
@@ -28,6 +28,18 @@ Played live in the Hermes CLI with `nvidia/nemotron-3-ultra-550b-a55b:free` thro
 - **Monster turns without prompting.** `tk_next_turn` plays every monster turn up to the next player character and returns what each monster did, so the model narrates a complete round from one call.
 - **Identity.** The sender comes from the gateway turn context (`HERMES_SESSION_ACTOR_ID`, falling back to `HERMES_SESSION_USER_ID`), and the campaign is keyed by platform and chat id. A message without an identified sender, and any unattended turn such as a cron job, can claim and move nothing. The local CLI, TUI and Desktop user owns every character. Ownership, turn order and game master refusals between different players run in `tests/test_integration.py`, which binds distinct sender ids with the gateway's own session variables.
 - **Game master.** The player who starts the campaign adjudicates with `tk_start_combat`, `tk_damage`, `tk_heal`, `tk_condition` and a long `tk_rest`. Players cannot.
+
+## Desktop tabletop
+
+The Tabletop page in Hermes Desktop and the Webapp is a real-time 3D scene drawn by a compact WebGL renderer inside the plugin's single ESM file. It reads the campaign database through the read-only route and changes nothing.
+
+- **The table.** A wooden table lit by a low sun and two candles, a felt board of 12 by 10 squares with columns A-L and rows 1-10 on every edge, soft shadows, fog and a vignette that fades into the app theme.
+- **Miniatures.** Sixteen painted looks built from primitives on round bases: fighter with sword and shield, hooded rogue, wizard with hat and staff, cleric with mace, goblin, hobgoblin, kobold, wolf, dire wolf, skeleton, zombie, orc, bandit, bandit captain, giant rat and a towering ogre. Party members take their owner's colour and monsters stand on red bases.
+- **State on every base.** A hit point ring, temporary hit point arc, condition gems, a concentration halo, death save pips on a downed character, and a tipped-over greyed miniature when a creature dies. The active creature stands in a spotlight with a floating name plate.
+- **Motion from the data.** When a position changes the miniature hops across the board, an attack log entry sends the attacker lunging (or a shot flying for ranged attacks), hit point loss flashes red with a floating damage number, healing flashes green.
+- **Dice that tell the truth.** Every roll is thrown into the tray as the matching polyhedron (d4, d6, d8, d10, d12, d20), tumbles, and comes to rest with the rolled value face up. A natural 20 glows gold and a natural 1 glows red. The die you see is the die Python rolled.
+- **Camera.** Drag to orbit, scroll to zoom, double-click to recenter. After a few quiet seconds the camera drifts in a slow orbit. Rendering pauses while the pane is hidden.
+- **2D board.** A 3D / 2D switch sits in the header, and the page falls back to the SVG board on its own when WebGL is unavailable. The initiative list, dice log and combat log stay in the side column in both views.
 
 ## Tools
 
@@ -67,7 +79,7 @@ The `tablekeeper` toolset turns on with the plugin. Requires Hermes 0.23.1 or ne
 ## What it touches
 
 - **Storage.** `<hermes home>/plugin-data/tablekeeper/campaigns.sqlite3`, resolved per profile, WAL mode, file mode 0600. The Desktop pane and dashboard route open it read-only.
-- **Prompt.** In a chat that has a campaign, and in a local CLI or Desktop session once it has used `/table` or a `tk_` tool, a compact state summary of at most about 600 tokens is added to each turn and the reply passes through the narration guard. Other sessions and chats without a campaign are untouched.
+- **Prompt.** In a chat that has a campaign, and in a local CLI or Desktop session once it has used `/table` or a `tk_` tool, a compact state summary of at most about 600 tokens is added to each turn and the reply passes through the narration guard. The guard lets a reply quote any hit point or AC figure the state block listed or a tool returned, flags invented damage, rolls and hit points, and appends one compact correction line. A campaign with no table activity for 24 hours adds no prompt tokens until the next `tk_` call or `/table` command wakes it. Other sessions and chats without a campaign are untouched.
 - **Network and processes.** None. The plugin makes no network requests, starts no subprocess and reads no credentials.
 - **Identity.** Platform, chat id and sender id from the turn context, used as the campaign and owner keys.
 
