@@ -734,3 +734,23 @@ class LocalSessionInjectionTests(LoadedPlugin):
         from hermes_cli.plugins import get_plugin_command_handler
         get_plugin_command_handler("table")("status", session_id="cmd-session", platform="cli")
         self.assertIn("TABLEKEEPER", self.pre("cmd-session")[0]["context"])
+
+
+class ModelNamingTests(LoadedPlugin):
+    def setUp(self):
+        self.cli = lambda tool, args=None: self.call(tool, args, platform="cli", chat="")
+        self.cli("tk_new_campaign", {"replace": True})
+        self.cli("tk_claim_character", {"character": "fighter"})
+
+    def test_monsters_may_be_named_by_name_in_any_case_or_spelling(self):
+        res = self.cli("tk_start_combat", {"monsters": [{"name": "Goblin", "count": 1}, {"monster": "Dire Wolf"}]})
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(sorted(res["spawned"]), ["dire_wolf-1", "goblin-1"])
+
+    def test_attack_may_be_named_by_name(self):
+        self.cli("tk_start_combat", {"monsters": [{"type": "goblin", "x": 11, "y": 5}]})
+        for _ in range(8):
+            if self.cli("tk_state")["active"] == "fighter":
+                break
+            self.cli("tk_next_turn")
+        self.assertEqual(self.cli("tk_attack", {"target": "goblin-1", "name": "Longsword"})["refused"], "out_of_range")

@@ -622,7 +622,7 @@ def tk_attack(args):
         raise Refusal("friendly_target", "Attacks target enemies. The game master rules harm to allies with tk_damage.")
     if _dead(tgt):
         raise Refusal("invalid_target", f"{tgt['name']} is already dead.")
-    name = _slug(_text(args, "attack", required=False))
+    name = _slug(_text(args, "attack", required=False) or _text(args, "name", required=False))
     dist = _dist(att, tgt)
     options = ", ".join(f"{a['name']} ({'melee ' + str(a['reach']) + ' ft' if a.get('reach') else 'ranged ' + str(a['range'][1]) + ' ft'})"
                         for a in att["attacks"])
@@ -833,7 +833,7 @@ def _spawn_monsters(camp: dict, specs) -> list[dict]:
     made = []
     for spec in specs:
         spec = {"type": spec} if isinstance(spec, str) else spec
-        key = str(spec.get("type", "")).lower().strip().replace(" ", "_")
+        key = re.sub(r"[^a-z]+", "_", str(spec.get("type") or spec.get("name") or spec.get("monster") or "").lower()).strip("_")
         if key not in srd.MONSTERS:
             raise Refusal("unknown_monster", f"Monsters: {', '.join(srd.MONSTERS)}.")
         count = _int(spec, "count", 1, 1, MAX_MONSTERS)
@@ -1191,7 +1191,7 @@ def _flag(description: str) -> dict:
 _CHAR = _str("Character id: fighter, rogue, wizard or cleric. Omit when the sender has only one character.")
 _ROLL = {"advantage": _flag("Grant advantage if the situation earns it."),
          "disadvantage": _flag("Impose disadvantage if the situation earns it.")}
-_MONSTER = _obj(["type"], type=_str("goblin, hobgoblin, kobold, wolf, dire_wolf, skeleton, zombie, orc, bandit, "
+_MONSTER = _obj([], type=_str("goblin, hobgoblin, kobold, wolf, dire_wolf, skeleton, zombie, orc, bandit, "
                                     "bandit_captain, giant_rat or ogre."),
                 count=_num("How many, default 1."), x=_num("Column to place it, or to cluster a group around."), y=_num("Row to place it, or to cluster a group around."))
 
