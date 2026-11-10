@@ -645,10 +645,10 @@ const eyes = (b, h, col, r = 0.022, y = 0.02, spread = 0.062, z = 0.13) => { for
 
 const MINI_BUILDERS = {
   fighter(b) {
-    const h = biped(b, { torso: ART.steelDark, tf: F_METAL, legs: shade(ART.leather, 0.8), arm: ART.steel, af: F_METAL })
+    const h = biped(b, { torso: shade(TEAM, 0.78), tf: F_TEAM, legs: shade(ART.leather, 0.8), arm: ART.leather, af: 0 })
     b.add(box(0.27, 0.34, 0.03), TEAM, F_TEAM, [0, 0.58, 0.215])
-    b.add(sphere(0.17, 10, 6), ART.steel, F_METAL, [h[0], h[1] + 0.03, h[2]], [0, 0, 0], [1, 0.82, 1])
-    b.add(box(0.035, 0.12, 0.03), ART.steel, F_METAL, [0, h[1] - 0.01, 0.17])
+    b.add(sphere(0.17, 10, 6), shade(ART.steel, 0.62), F_METAL, [h[0], h[1] + 0.03, h[2]], [0, 0, 0], [1, 0.82, 1])
+    b.add(box(0.035, 0.12, 0.03), shade(ART.steel, 0.62), F_METAL, [0, h[1] - 0.01, 0.17])
     b.add(box(0.03, 0.2, 0.2), TEAM, F_TEAM, [0, h[1] + 0.18, 0], [0, 0, 0])
     b.add(cyl(0.27, 0.27, 0.045, 14), TEAM, F_TEAM, [-0.36, 0.58, 0.2], [Math.PI / 2, 0, 0])
     b.add(sphere(0.07, 8, 5), ART.gold, F_METAL, [-0.36, 0.58, 0.245], [0, 0, 0], [1, 1, 0.6])
@@ -881,7 +881,7 @@ void main(){
 const SURF_FS = `
 varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vF; varying vec2 vUV; varying vec4 vL;
 uniform vec3 uCam; uniform vec3 uSun; uniform vec3 uSunCol; uniform vec3 uSky; uniform vec3 uGround; uniform vec3 uFog; uniform float uFogD;
-uniform vec3 uTeam; uniform vec3 uGlow; uniform vec4 uFlash; uniform float uDesat; uniform float uTexMode;
+uniform vec3 uTeam; uniform vec3 uGlow; uniform vec4 uFlash; uniform float uDesat; uniform float uDim; uniform float uTexMode;
 uniform float uShine; uniform float uSpec; uniform vec3 uBody; uniform vec3 uInk; uniform float uRim;
 uniform vec4 uPL0; uniform vec4 uPL1; uniform vec3 uPLCol; uniform vec2 uTexel; uniform float uShadowOn;
 uniform sampler2D uTex; uniform sampler2D uShadow;
@@ -925,10 +925,10 @@ void main(){
   vec3 spec = uSunCol * pow(max(dot(N, H), 0.0), shin) * ks * sh * pool;
   float rim = pow(1.0 - max(dot(N, V), 0.0), 2.4);
   vec3 col = alb * diff + spec + mix(uSky, vec3(1.0, 0.78, 0.55), 0.55) * rim * uRim;
-  if (metal > 0.5) { vec3 rf = reflect(-V, N); col = mix(col, alb * mix(uGround * 1.5, uSky * 2.2, rf.y * 0.5 + 0.5) + spec, 0.55); }
+  if (metal > 0.5) { vec3 rf = reflect(-V, N); col = mix(col, alb * mix(uGround * 1.5, mix(uSky, vec3(0.5, 0.36, 0.22), 0.6) * 1.6, rf.y * 0.5 + 0.5) + spec, 0.35); }
   col += uGlow;
   if (glow > 0.5 || tglow > 0.5) col = alb * 1.9;
-  col = mix(col, vec3(dot(col, vec3(0.3, 0.59, 0.11))), uDesat);
+  col = mix(col, vec3(dot(col, vec3(0.3, 0.59, 0.11))), uDesat) * uDim;
   col += uFlash.rgb * uFlash.a;
   float dist = length(uCam - vW);
   col = mix(col, lin(uFog), 1.0 - exp(-uFogD * uFogD * dist * dist));
@@ -1192,8 +1192,8 @@ export function homeFrame(cells, aspect, el = HOME_EL) {
 /** The corner inset that shows the dice tray close up, in canvas CSS pixels; k eases 0 (resting) to 1 (a die is in the air). */
 export function insetRect(w, h, k) {
   const m = 14
-  const rest = clamp(w * 0.3, 150, 640)
-  const big = Math.min(rest * 1.35, w * 0.38)
+  const rest = clamp(w * 0.25, 130, 540)
+  const big = Math.min(rest * 1.35, w * 0.34)
   const iw = Math.min(rest + (big - rest) * clamp(k, 0, 1), w - 2 * m), ih = iw * 0.72
   return { x: w - m - iw, y: m, w: iw, h: Math.min(ih, h - 2 * m) }
 }
@@ -1615,10 +1615,11 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const f = m.fall
     const radius = footR(m.geo)
     const breathe = 1 + Math.sin(t * 1.7 + m.phase) * 0.012 * (1 - f)
-    const q = qmul(qaxis([0, 1, 0], m.yaw), qaxis([1, 0, 0], -f * 1.42))
-    const lift = Math.sin(f * 1.42) * radius * 0.92
+    const dk = m.v.state === 'dead' ? f : 0, sc = 1 - 0.55 * dk
+    const q = qmul(qaxis([0, 1, 0], m.yaw), qaxis([1, 0, 0], -f * (1.42 + 0.15 * dk)))
+    const lift = Math.sin(f * 1.42) * radius * 0.92 * sc - 0.03 * dk
     const y = BOARD_Y + dy + lift
-    m.model = m4trs([m.pos[0] + dx, y, m.pos[1] + dz], q, [MINI_XZ, MINI_SCALE_UP * breathe, MINI_XZ])
+    m.model = m4trs([m.pos[0] + dx, y, m.pos[1] + dz], q, [MINI_XZ * sc, MINI_SCALE_UP * breathe * sc, MINI_XZ * sc])
     m.eyeAt = [m.pos[0] + dx, BOARD_Y + (m.geo.top || 1.2) * MINI_SCALE_UP * (1 - f * 0.8) + dy + 0.12, m.pos[1] + dz]
     m.ground = [m.pos[0] + dx, m.pos[1] + dz]
     if (m.pending && t - m.pending > 6) commit(m)
@@ -1661,10 +1662,10 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   const lightEye = vadd([0, 0, 1.6], vmul(SUN, 24))
   const lvp = m4mul(m4ortho(-12.5, 12.5, -12.5, 12.5, 1, 52), m4look(lightEye, [0, 0, 1.6]))
   let pl0 = [0, 0, 0, 0], pl1 = [0, 0, 0, 0]
-  const D0 = { rim: 0.16, team: [1, 1, 1], glow: [0, 0, 0], flash: [0, 0, 0, 0], desat: 0, tex: null, mode: 0, spec: 0.1, shine: 14, body: [1, 1, 1], ink: [0, 0, 0] }
+  const D0 = { rim: 0.16, team: [1, 1, 1], glow: [0, 0, 0], flash: [0, 0, 0, 0], desat: 0, dim: 1, tex: null, mode: 0, spec: 0.1, shine: 14, body: [1, 1, 1], ink: [0, 0, 0] }
   const drawSurf = (g, model, o = D0) => {
     const d = o === D0 ? o : { ...D0, ...o }
-    surf.m('uModel', model); surf.v3('uTeam', d.team); surf.v3('uGlow', d.glow); surf.v4('uFlash', d.flash); surf.f('uDesat', d.desat)
+    surf.m('uModel', model); surf.v3('uTeam', d.team); surf.v3('uGlow', d.glow); surf.v4('uFlash', d.flash); surf.f('uDesat', d.desat); surf.f('uDim', d.dim)
     surf.f('uTexMode', d.tex ? d.mode : 0); surf.f('uSpec', d.spec); surf.f('uShine', d.shine); surf.v3('uBody', d.body); surf.v3('uInk', d.ink); surf.f('uRim', d.rim)
     if (d.tex) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, d.tex) }
     bindGeo(g)
@@ -1704,7 +1705,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       const flashK = m.flash ? clamp(1 - (S.time - m.flash.t) / 0.7, 0, 1) : 0
       const col = m.tone ? toneOf(m.tone) : toneOf('red')
       const dead = m.v.state === 'dead'
-      drawSurf(m.geo, m.model, { team: col, flash: flashK > 0 ? [m.flash.tint[0], m.flash.tint[1], m.flash.tint[2], flashK * m.flash.strength] : D0.flash, rim: dead ? 0.3 : 0.95, desat: dead ? 0.92 : m.v.state === 'down' ? 0.45 : 0, glow: m.key === S.active ? [0.03, 0.03, 0.05] : D0.glow })
+      drawSurf(m.geo, m.model, { team: col, flash: flashK > 0 ? [m.flash.tint[0], m.flash.tint[1], m.flash.tint[2], flashK * m.flash.strength] : D0.flash, rim: dead ? 0.3 : 0.95, dim: dead ? 0.72 : 1, desat: dead ? 0.92 : m.v.state === 'down' ? 0.45 : 0, glow: m.key === S.active ? [0.03, 0.03, 0.05] : D0.glow })
       // condition gems, concentration halo, death-save pips
       const c = m.c, top = BOARD_Y + (m.geo.top || 1.2) * MINI_SCALE_UP + 0.3
       c.conditions.slice(0, 4).forEach((cond, k, all) => {
