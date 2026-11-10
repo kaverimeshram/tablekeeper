@@ -123,7 +123,7 @@ export function creatureView(raw, index) {
   const saves = raw?.death_saves || {}
   const kind = raw?.kind === 'pc' ? 'pc' : 'monster'
   const failures = num(saves.f)
-  const conditions = list(raw?.conditions).map(c => clip(c, 24).toLowerCase())
+  const conditions = list(raw?.conditions).map(c => clip(c, 24).toLowerCase()).filter(c => c !== 'dead' && c !== 'stable')
   const status = clip(raw?.status, 16)
   const dead = status === 'dead' || raw?.dead === true || failures >= 3 || (kind === 'monster' && hp <= 0)
   const down = !dead && hp <= 0
