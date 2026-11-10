@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 
 from gateway.session_context import get_session_env
 from plugins.plugin_storage import plugin_data_dir
@@ -21,8 +22,11 @@ GRID_W, GRID_H, FEET = rules.GRID_W, rules.GRID_H, 5
 LOCAL_SURFACES = {"", "cli", "tui", "desktop", "local", "acp"}
 CONTEXT_CHARS = 2200  # about 600 tokens of compact text
 MAX_MONSTERS = 12
+DORMANT_SECONDS = 24 * 3600  # a chat with no table activity this long gets no per-turn state block
+CORRECTION_ITEMS = 3
 _DBS: dict[str, object] = {}
 _TURNS: dict[str, dict] = {}
+_ACTIVE: dict[str, float] = {}  # chat -> last tk_ tool or /table use in this process
 _PLAYING: dict[str, None] = {}  # local sessions that used a tk_ tool or /table; only they get the state block
 # ponytail: in memory, so a resumed CLI session gets the state block again after its first tk_ call or /table use
 
@@ -1051,6 +1055,12 @@ def _status_text(camp: dict) -> str:
         + (f", {rules.state(c)}" if rules.state(c) != "ok" else "") for c in camp["creatures"]])
 
 
+def _touch(chat: str) -> None:
+    _ACTIVE[chat] = time.time()
+    if len(_ACTIVE) > 256:
+        _ACTIVE.pop(next(iter(_ACTIVE)))
+
+
 def _mark_playing(session_id: str) -> None:
     if session_id:
         _PLAYING.pop(session_id, None)
@@ -1066,6 +1076,7 @@ def _command(raw_args: str, *, platform: str = "", source=None, session_id: str 
     try:
         with LOCK:
             who = _identity(source=source, platform=platform)
+            _touch(who["chat"])
             if sub == "new":
                 confirmed, scene = rest.split(" ", 1)[0] == "confirm", rest.removeprefix("confirm").strip()
                 old = store.load(_db(), who["chat"])
@@ -1144,11 +1155,11 @@ def _turn_hook(session_id: str = "", **_kw):
         return None  # the CLI campaign is shared by every local session; unrelated sessions stay untouched
     with LOCK:
         camp = store.load(_db(), who["chat"])
-    if camp is None:
-        return None
+    if camp is None or time.time() - max(camp["updated"], _ACTIVE.get(who["chat"], 0)) > DORMANT_SECONDS:
+        return None  # dormant campaigns cost no prompt tokens; a tk_ call or /table wakes them
     if len(_TURNS) > 64:
         _TURNS.pop(next(iter(_TURNS)))
-    _TURNS[session_id] = {"chat": who["chat"], "numbers": set()}
+    _TURNS[session_id] = {"chat": who["chat"], "numbers": set(), "start": camp}
     return {"context": _context_text(camp, who)}
 
 
@@ -1171,9 +1182,10 @@ def _collect(tool_name: str = "", result="", session_id: str = "", **_kw) -> Non
     turn = _TURNS.get(session_id)
     if turn is None:  # the first tool call of a session arrives before any state block
         try:
-            turn = _TURNS[session_id] = {"chat": _identity()["chat"], "numbers": set()}
+            turn = _TURNS[session_id] = {"chat": _identity()["chat"], "numbers": set(), "start": None}
         except Refusal:
             return
+    _touch(turn["chat"])
     try:
         _numbers(json.loads(result) if isinstance(result, str) else result, turn["numbers"])
     except json.JSONDecodeError:
@@ -1192,7 +1204,8 @@ _CLAIMED_AC = re.compile(r"\bAC\s*(\d{1,2})\b")
 _CLAIMED_DC = re.compile(r"\bDC\s*(\d{1,2})\b")
 
 
-def _check_narration(text: str, camp: dict, produced: set) -> list[str]:
+def _check_narration(text: str, camp: dict, produced: set, start: dict | None = None) -> list[str]:
+    """Problems in text. `start` is the snapshot the state block carried: its HP and AC are quotable, its numbers excuse no damage or roll."""
     problems = []
     creatures = camp["creatures"][:24]
     for c in creatures:
@@ -1202,17 +1215,19 @@ def _check_narration(text: str, camp: dict, produced: set) -> list[str]:
                 if subject and not (_DEATH_WORDS.search(m.group(0)) or _CLAUSE_BREAK.search(m.group(0)[len(c["name"]):])):
                     problems.append(f"{c['name']} is at 0 HP ({c['status']}) and cannot act")
                     break
-    hp = {n for c in creatures for n in (c["hp"], c["max_hp"], c["temp_hp"])}
+    seen = creatures + (start["creatures"][:24] if start else [])
+    hp = {n for c in seen for n in (c["hp"], c["max_hp"], c["temp_hp"])}
+    ac = {rules.effective_ac(c) for c in seen}
     flat = _MARKDOWN.sub("", text)
     for pattern, label, known in ((_DAMAGE, "damage figure", produced),
                                   (_HIT_POINTS, "hit point figure", produced | hp),
                                   (_CLAIMED_ROLL, "dice roll", produced),
-                                  (_CLAIMED_AC, "AC", produced | {rules.effective_ac(c) for c in creatures}),
+                                  (_CLAIMED_AC, "AC", produced | ac),
                                   (_CLAIMED_DC, "DC", produced | {10})):  # 10 is the fixed death save DC, quoted as a rule
         figures = {int(n) for m in pattern.finditer(flat) for n in m.groups() if n}
         bad = sorted(figures - known)
         if bad:
-            problems.append(f"{label} {', '.join(map(str, bad))} was not returned by a tk_ tool this turn")
+            problems.append(f"{label} {', '.join(map(str, bad[:CORRECTION_ITEMS]))}{'+' if len(bad) > CORRECTION_ITEMS else ''} was not returned by a tk_ tool this turn")
     return problems
 
 
@@ -1225,10 +1240,12 @@ def _guard(response_text: str = "", session_id: str = "", **_kw):
         camp = store.load(_db(), turn["chat"])
     if camp is None:
         return None
-    problems = _check_narration(response_text, camp, turn["numbers"])
+    if "[Tablekeeper check:" in response_text:
+        return None
+    problems = _check_narration(response_text, camp, turn["numbers"], turn["start"])
     if not problems:
         return None
-    return response_text + "\n\n[Tablekeeper check: " + "; ".join(problems) + ". The table state is authoritative. Use tk_state.]"
+    return response_text + "\n\n[Tablekeeper check: " + "; ".join(problems[:CORRECTION_ITEMS]) + ". Table state is authoritative: tk_state.]"
 
 
 # ---------------------------------------------------------------- registration

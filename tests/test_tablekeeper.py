@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import tablekeeper
 from tablekeeper import rules, srd, store
@@ -222,6 +223,35 @@ class NarrationGuardTests(unittest.TestCase):
                      "**Goblin 3** fires a shortbow from 55 feet - natural **10** (total 14) vs AC 18 → **MISSES**.\n\n---\n\n"
                      "**Brann Hollis:** 19/28 HP | AC 18 | Position (0,5) | **Your turn.**")
         self.assertEqual(self.check(round_one, produced={16, 14, 13, 4, 20, 24, 18, 9, 10, 19, 28}), [])
+
+    def test_figures_from_the_turn_start_snapshot_pass_but_invented_ones_do_not(self):
+        """Brann was at 25 when the state block went out and is at 21 now: quoting 25 is not an invention."""
+        start = self.camp()
+        start["creatures"][0]["hp"] = 25
+        start["creatures"][0]["ac"] = 16
+        text = "Brann drops from 25 HP to 21 HP, AC 16 for the moment."
+        self.assertTrue(tablekeeper._check_narration(text, self.camp(), set()))
+        self.assertEqual(tablekeeper._check_narration(text, self.camp(), set(), start), [])
+        for invented in ("Brann has 99 HP left.", "Brann is at 98/28 HP.", "It beats AC 77."):
+            self.assertTrue(tablekeeper._check_narration(invented, self.camp(), set(), start), invented)
+
+    def test_snapshot_numbers_never_excuse_a_damage_or_roll_claim(self):
+        start = self.camp()
+        start["creatures"][0]["hp"] = 25
+        for text in ("The blow deals 25 damage.", "Brann rolled a 25.", "Brann rolled a 18."):
+            self.assertTrue(tablekeeper._check_narration(text, self.camp(), set(), start), text)
+
+    def test_a_correction_is_one_compact_line_and_never_stacks(self):
+        tablekeeper._TURNS["s-compact"] = {"chat": "c", "numbers": set(), "start": self.camp()}
+        wall = " ".join(f"Hit {n} damage, rolled a {n + 40}, {n + 70} HP." for n in range(1, 8))
+        with mock.patch.object(tablekeeper.store, "load", return_value=self.camp()):
+            out = tablekeeper._guard(response_text=wall, session_id="s-compact")
+            tail = out[len(wall):].strip()
+            self.assertEqual(tail.count("\n"), 0)
+            self.assertEqual(tail.count("[Tablekeeper check"), 1)
+            self.assertLessEqual(len(tail), 260)
+            tablekeeper._TURNS["s-again"] = {"chat": "c", "numbers": set(), "start": self.camp()}
+            self.assertIsNone(tablekeeper._guard(response_text=out, session_id="s-again"), "an already corrected reply is left alone")
 
     def test_the_death_save_dc_is_a_quotable_rule(self):
         self.assertEqual(self.check("Make death saving throws on your turns (DC 10); three failures kill."), [])

@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import stat
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -593,6 +594,47 @@ class HookTests(LoadedPlugin):
         self.assertIn("11", flagged[0])
         _, clean = self.turn(narration, tools=[("tk_attack", {"ok": True, "damage": 11})])
         self.assertEqual(clean, [])
+
+    def test_guard_allows_the_hit_points_the_state_block_listed_before_a_tool_changed_them(self):
+        self.call("tk_damage", {"target": "fighter", "amount": 3}, chat=self.chat)
+        start = self.creature(self.chat, "fighter")["hp"]
+        self.hook("pre_llm_call", session_id="s1", user_message="go", conversation_history=[], is_first_turn=False,
+                  model="m", platform="telegram")
+        self.call("tk_damage", {"target": "fighter", "amount": 4}, chat=self.chat)
+        now = self.creature(self.chat, "fighter")["hp"]
+        self.hook("post_tool_call", tool_name="tk_damage", args={}, result=json.dumps({"ok": True, "damage": 4}), session_id="s1")
+        out = self.hook("transform_llm_output", response_text=f"Brann drops from {start} HP to {now} HP.", session_id="s1", model="m", platform="telegram")
+        self.assertEqual(out, [])
+
+    def test_guard_adds_one_compact_line_and_leaves_a_corrected_reply_alone(self):
+        wall = " ".join(f"Hit {n} damage, rolled a {n + 40}, {n + 70} HP." for n in range(1, 8))
+        _, out = self.turn(wall)
+        self.assertEqual(len(out), 1)
+        tail = out[0][len(wall):].strip()
+        self.assertEqual(tail.count("\n"), 0)
+        self.assertEqual(out[0].count("[Tablekeeper check"), 1)
+        self.assertLessEqual(len(tail), 260)
+        _, again = self.turn(out[0])
+        self.assertEqual(again, [])
+
+    def test_a_chat_with_no_table_activity_for_a_day_gets_no_state_block_until_a_tool_runs(self):
+        key = f"telegram:{self.chat}"
+        pre = dict(session_id="s1", user_message="hi", conversation_history=[], is_first_turn=False, model="m", platform="telegram")
+        self.assertEqual(len(self.hook("pre_llm_call", **pre)), 1)
+
+        def age(hours):
+            with self.plugin.LOCK:
+                db = self.plugin._db()
+                db.execute("UPDATE chats SET updated=? WHERE chat=?", (time.time() - hours * 3600, key))
+                db.commit()
+            self.plugin._ACTIVE.pop(key, None)
+
+        age(25)
+        self.assertEqual(self.hook("pre_llm_call", **pre), [], "a dormant campaign costs no prompt tokens")
+        self.hook("post_tool_call", tool_name="tk_state", args={}, result="{}", session_id="s1")
+        self.assertEqual(len(self.hook("pre_llm_call", **pre)), 1, "table activity wakes the campaign")
+        age(23)
+        self.assertEqual(len(self.hook("pre_llm_call", **pre)), 1, "23 hours is still a live table")
 
     def test_guard_flags_a_claimed_roll_and_a_dead_creature_acting(self):
         _, out = self.turn("Bob rolled a 20 and the rogue is unstoppable.")
