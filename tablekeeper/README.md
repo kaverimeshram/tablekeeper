@@ -5,22 +5,21 @@ Tablekeeper turns a Hermes chat into a tabletop campaign table. Python rolls eve
 ![Tablekeeper Desktop page: battle grid, initiative and dice tray](https://raw.githubusercontent.com/kaverimeshram/tablekeeper/main/docs/pane.png)
 
 ```text
-Alice (game master): /table new A goblin cave
-Alice:               /table claim fighter
-Bob:                 /table claim rogue
-Alice:               Two goblins jump us!
-  tk_start_combat   -> initiative: Pip 21, Goblin 1 17, Brann 17, Goblin 2 9. Pip's turn.
-Alice:               Brann charges in and swings!
-  tk_attack         -> refused: not_your_turn. It is Pip Underbough's turn, not Brann Hollis's.
-Alice:               Then I take Pip's turn for him.
-  tk_attack         -> refused: not_owner. Pip Underbough belongs to another player.
-Bob:                 Pip sprints up and looses his shortbow at the nearest goblin.
-  tk_move           -> (0,4) to (5,4), 25 ft, 0 ft left
-  tk_attack         -> d20 6 + 5 = 11 against AC 15: miss
-Bob:                 Pip's done.
-  tk_next_turn      -> Goblin 1 runs 25 ft to (6,3), scimitar: d20 17 + 4 = 21 against AC 14, hit for 6 slashing. Pip 18/24 HP. Brann's turn.
-Hermes:              The goblin skids in under Pip's guard and opens a gash across his arm. Pip, 18 of 24. Brann, you are up.
+You:      /table new The Goblin Cave
+You:      /table claim fighter
+You:      Brann the fighter faces the goblins of the Goblin Cave. Start combat with 3 goblins.
+  tk_start_combat -> initiative: Goblin 2 16, Goblin 3 14, Brann 13, Goblin 1 4. Goblin 2's shortbow: d20 20 + 4 = 24 against AC 18, critical, 9 piercing. Goblin 3: d20 10 + 4 = 14, miss.
+Hermes:   Goblin 2 fires a shortbow from 55 feet: natural 20, CRITICAL HIT (total 24 vs AC 18) for 9 piercing damage.
+          Goblin 3 fires: natural 10 (total 14) vs AC 18, MISSES. Brann Hollis: 19/28 HP. Your turn.
+You:      I attack Goblin 3 with my longsword.
+  tk_attack         -> Longsword d20 11 + 5 = 16 against AC 15: hit, 12 slashing. Goblin 3 dead.
+Hermes:   Longsword attack on Goblin 3 (5 ft, melee): natural 11 (total 16) vs AC 15, HIT for 12 slashing damage. Goblin 3 is slain.
+You:      End my turn.
+  tk_next_turn      -> Goblin 1 scimitar d20 17 + 4 = 21 against AC 18, hit, 8 slashing. Goblin 2 d20 5 + 4 = 9, miss. Brann 4/28 HP.
+Hermes:   Goblin 1 strikes: natural 17 (total 21) vs AC 18, HIT for 8 slashing damage. Goblin 2 strikes: natural 5 (total 9) vs AC 18, MISSES.
+          Brann Hollis: 4/28 HP. Your turn.
 ```
+Played live in the Hermes CLI with `nvidia/nemotron-3-ultra-550b-a55b:free` through OpenRouter; the dice are the plugin's.
 
 ## What it does
 
@@ -68,7 +67,7 @@ The `tablekeeper` toolset turns on with the plugin. Requires Hermes 0.23.1 or ne
 ## What it touches
 
 - **Storage.** `<hermes home>/plugin-data/tablekeeper/campaigns.sqlite3`, resolved per profile, WAL mode, file mode 0600. The Desktop pane and dashboard route open it read-only.
-- **Prompt.** In a chat that has a campaign, a compact state summary of at most about 600 tokens is added to each turn, and the reply passes through the narration guard. Chats without a campaign are untouched.
+- **Prompt.** In a chat that has a campaign, and in a local CLI or Desktop session once it has used `/table` or a `tk_` tool, a compact state summary of at most about 600 tokens is added to each turn and the reply passes through the narration guard. Other sessions and chats without a campaign are untouched.
 - **Network and processes.** None. The plugin makes no network requests, starts no subprocess and reads no credentials.
 - **Identity.** Platform, chat id and sender id from the turn context, used as the campaign and owner keys.
 
