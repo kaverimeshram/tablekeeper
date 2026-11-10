@@ -2,6 +2,8 @@
 
 Tablekeeper turns a Hermes chat into a tabletop campaign table. Python rolls every die and owns hit points, positions, initiative and turn order, so the model narrates results it cannot change. Each player controls only the character they claimed, and in combat only on that character's turn. Monsters play their own turns, from SRD 5.1 stat blocks, the moment a player ends theirs.
 
+![Tablekeeper Desktop page: battle grid, initiative and dice tray](https://raw.githubusercontent.com/kaverimeshram/tablekeeper/main/docs/pane.png)
+
 ```text
 Alice (game master): /table new A goblin cave
 Alice:               /table claim fighter
@@ -57,10 +59,8 @@ A refused action comes back as a result with `refused` and a `message`; the mode
 
 ## Setup
 
-Place the `tablekeeper` directory in your profile's plugins directory (`<hermes home>/plugins/tablekeeper`) and run:
-
 ```bash
-hermes plugins enable tablekeeper
+hermes plugins install kaverimeshram/tablekeeper/tablekeeper --enable
 ```
 
 The `tablekeeper` toolset turns on with the plugin. Requires Hermes 0.23.1 or newer. Send `/table new` in the chat where the game happens.
