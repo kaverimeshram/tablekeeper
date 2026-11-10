@@ -24,9 +24,9 @@ Played live in the Hermes CLI with `nvidia/nemotron-3-ultra-550b-a55b:free` thro
 ## What it does
 
 - **Authoritative state.** A SQLite campaign per chat holds every creature, position, condition, initiative slot, roll and log line. A narration guard appends a visible correction when the model states a number no tool produced, a roll a player only claimed, or an action by a creature at 0 HP.
-- **SRD 5.1 content.** Twelve monsters, four level 3 characters (fighter, rogue, wizard, cleric) and fourteen spells with their SRD numbers, on a 12 by 10 grid at 5 ft per square. Advantage and disadvantage cancel, critical hits double dice only, resistance halves and rounds down, temporary hit points absorb first, damage at 0 HP costs death saves, concentration is checked, opportunity attacks fire.
+- **SRD 5.1 content.** Twelve monsters, four level 3 characters (fighter, rogue, wizard, cleric) and fourteen spells with their SRD numbers, on a 12 by 10 grid at 5 ft per square. Squares carry the labels the Desktop pane shows, columns A-L and rows 1-10, in every tool result, log line and `/table map`. Advantage and disadvantage cancel, critical hits double dice only, resistance halves and rounds down, temporary hit points absorb first, damage at 0 HP costs death saves, concentration is checked, opportunity attacks fire.
 - **Monster turns without prompting.** `tk_next_turn` plays every monster turn up to the next player character and returns what each monster did, so the model narrates a complete round from one call.
-- **Identity.** The sender comes from the gateway turn context (`HERMES_SESSION_ACTOR_ID`, falling back to `HERMES_SESSION_USER_ID`), and the campaign is keyed by platform and chat id. A message without an identified sender can claim and move nothing. The local CLI, TUI and Desktop user owns every character.
+- **Identity.** The sender comes from the gateway turn context (`HERMES_SESSION_ACTOR_ID`, falling back to `HERMES_SESSION_USER_ID`), and the campaign is keyed by platform and chat id. A message without an identified sender, and any unattended turn such as a cron job, can claim and move nothing. The local CLI, TUI and Desktop user owns every character. Ownership, turn order and game master refusals between different players run in `tests/test_integration.py`, which binds distinct sender ids with the gateway's own session variables.
 - **Game master.** The player who starts the campaign adjudicates with `tk_start_combat`, `tk_damage`, `tk_heal`, `tk_condition` and a long `tk_rest`. Players cannot.
 
 ## Tools
@@ -40,7 +40,7 @@ Played live in the Hermes CLI with `nvidia/nemotron-3-ultra-550b-a55b:free` thro
 | `tk_check`, `tk_save` | character owner | Ability or skill check, saving throw. |
 | `tk_attack` | owner, on their turn | To-hit against AC, cover, damage, range and reach. |
 | `tk_cast` | owner, on their turn | Slots, attacks, saves, upcasting, concentration. |
-| `tk_move` | owner, on their turn | Speed limited movement to a square or toward a creature, opportunity attacks, disengage. |
+| `tk_move` | owner, on their turn | Speed limited movement to a square label such as `C4` (or `x`, `y`) or toward a creature, opportunity attacks, disengage. `stand: true` gets up from prone for half the speed. |
 | `tk_death_save` | owner, on their turn | Death saving throw; ends the turn. |
 | `tk_next_turn` | owner of the active character | Ends the turn and plays the monsters. |
 | `tk_rest` | owner (short), game master (long) | Hit dice, full recovery. Outside combat. |
