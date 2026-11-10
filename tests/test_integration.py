@@ -435,8 +435,8 @@ class PersistenceTests(LoadedPlugin):
             self.assertGreaterEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
         for side in path.parent.glob("campaigns.sqlite3-*"):
             self.assertEqual(stat.S_IMODE(side.stat().st_mode), 0o600, side.name)
-        self.assertFalse((Path.home() / ".hermes" / "plugin-data" / "tablekeeper").exists() and
-                         (Path.home() / ".hermes" / "plugin-data" / "tablekeeper" / "campaigns.sqlite3").stat().st_mtime > path.stat().st_mtime)
+        real = Path.home() / ".hermes" / "plugin-data" / "tablekeeper" / "campaigns.sqlite3"
+        self.assertFalse(real.exists() and real.stat().st_mtime > path.stat().st_mtime)
 
     def test_each_profile_has_its_own_campaigns(self):
         from hermes_constants import reset_hermes_home_override, set_hermes_home_override
