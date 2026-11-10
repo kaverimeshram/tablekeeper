@@ -39,17 +39,23 @@ class Refusal(Exception):
 
 def _identity(source=None, platform: str = "") -> dict:
     """Who is speaking and in which chat: the gateway turn context, or the command's source."""
+    unattended = False
     if source is not None:
         platform = str(getattr(getattr(source, "platform", ""), "value", getattr(source, "platform", "")) or "")
         chat_id, user = str(getattr(source, "chat_id", "") or ""), str(getattr(source, "user_id", "") or "")
         name = str(getattr(source, "user_name", "") or user)
     else:
         platform = platform or get_session_env("HERMES_SESSION_PLATFORM")
+        unattended = get_session_env("HERMES_CRON_SESSION") == "1" or \
+            get_session_env("HERMES_SESSION_SOURCE").strip().lower() not in LOCAL_SURFACES  # cron, kanban, webhook
         chat_id = get_session_env("HERMES_SESSION_CHAT_ID")
         user = get_session_env("HERMES_SESSION_ACTOR_ID") or get_session_env("HERMES_SESSION_USER_ID")
         name = get_session_env("HERMES_SESSION_ACTOR_NAME") or get_session_env("HERMES_SESSION_USER_NAME") or user
     platform = platform.strip().lower()
     if platform in LOCAL_SURFACES and not (platform == "" and (chat_id or user)):
+        if unattended:
+            raise Refusal("identity_unavailable", "This turn has no identified sender and is not an interactive local session, "
+                          "so no character can act and no game master power applies.")
         return {"chat": "local:table", "user": "local", "name": "local", "local": True}
     if not chat_id or not user:
         raise Refusal("identity_unavailable", "The sender could not be identified, so no character can act. "
@@ -140,16 +146,33 @@ def _occupied(camp: dict, pos, skip: str = "") -> bool:
     return any(c["id"] != skip and not _dead(c) and list(c["pos"]) == list(pos) for c in camp["creatures"])
 
 
+def _label(pos) -> str:
+    """A square as the Desktop pane labels it: column letter A-L, row number 1-10."""
+    return f"{chr(65 + pos[0])}{pos[1] + 1}"
+
+
 def _on_grid(x: int, y: int) -> None:
     if not (0 <= x < GRID_W and 0 <= y < GRID_H):
-        raise Refusal("off_grid", f"The grid is {GRID_W} columns (x 0-{GRID_W - 1}) by {GRID_H} rows (y 0-{GRID_H - 1}).")
+        raise Refusal("off_grid", f"The grid is {GRID_W} columns (A-{chr(64 + GRID_W)}, x 0-{GRID_W - 1}) by "
+                      f"{GRID_H} rows (1-{GRID_H}, y 0-{GRID_H - 1}).")
+
+
+def _parse_square(text) -> list[int]:
+    """'C4' (as on the pane) to [x, y] = [2, 3]."""
+    m = re.fullmatch(r"([A-Za-z])\s*(\d{1,2})", str(text).strip())
+    if not m:
+        raise Refusal("invalid_input", f"{str(text)[:20]!r} is not a square. Give a column letter and row number "
+                      f"such as C4 (columns A-{chr(64 + GRID_W)}, rows 1-{GRID_H}).")
+    x, y = ord(m[1].upper()) - 65, int(m[2]) - 1
+    _on_grid(x, y)
+    return [x, y]
 
 
 def _spawn_pos(camp: dict, side: str, want=None) -> list[int]:
     if want is not None:
         _on_grid(*want)
         if _occupied(camp, want):
-            raise Refusal("occupied", f"Square ({want[0]},{want[1]}) is occupied.")
+            raise Refusal("occupied", f"Square {_label(want)} is occupied.")
         return list(want)
     columns = range(0, 3) if side == "pc" else range(GRID_W - 1, GRID_W - 4, -1)
     for x in columns:
@@ -191,7 +214,7 @@ def _walk(camp: dict, c: dict, dest) -> dict:
     x, y = dest
     _on_grid(x, y)
     if _occupied(camp, dest, c["id"]):
-        raise Refusal("occupied", f"Square ({x},{y}) is occupied.")
+        raise Refusal("occupied", f"Square {_label(dest)} is occupied.")
     origin = list(c["pos"])
     feet = FEET * max(abs(origin[0] - x), abs(origin[1] - y))
     cost = feet * 2 if "prone" in c["conditions"] else feet  # crawling
@@ -201,7 +224,8 @@ def _walk(camp: dict, c: dict, dest) -> dict:
     watchers = _engaged(camp, c)
     c["pos"], c["turn"]["moved"] = [x, y], c["turn"]["moved"] + cost
     left = [o["id"] for o in watchers if _dist(c, o) > _reach(o) and not o["turn"]["reaction"]]
-    return {"from": origin, "to": [x, y], "feet": feet, "left_reach_of": left}
+    return {"from": origin, "to": [x, y], "from_square": _label(origin), "to_square": _label((x, y)), "feet": feet,
+            "left_reach_of": left}
 
 
 # ---------------------------------------------------------------- dice records
@@ -234,7 +258,7 @@ def _new_turn() -> dict:
 
 def _brief(c: dict) -> dict:
     keys = ("id", "name", "kind", "owner", "hp", "max_hp", "temp_hp", "ac", "pos", "status", "conditions", "speed")
-    return {**{k: c[k] for k in keys}, "status": rules.state(c)}
+    return {**{k: c[k] for k in keys}, "status": rules.state(c), "square": _label(c["pos"])}
 
 
 # ---------------------------------------------------------------- attacks and damage
@@ -318,12 +342,12 @@ def _monster_turn(camp: dict, m: dict) -> dict:
         report["reason"] = act.get("reason", "")
         _log(camp, "turn", f"{m['name']} does nothing: {report['reason']}.")
     elif act["action"] == "flee":
-        report["flee"] = act["flee"]
-        _log(camp, "move", f"{m['name']} flees to ({act['flee']['to'][0]},{act['flee']['to'][1]}).")
+        report["flee"] = {**act["flee"], "to_square": _label(act["flee"]["to"])}
+        _log(camp, "move", f"{m['name']} flees to {_label(act['flee']['to'])}.")
     else:
         if act.get("move"):
-            report["move"] = act["move"]
-            _log(camp, "move", f"{m['name']} moves to ({act['move']['to'][0]},{act['move']['to'][1]}).")
+            report["move"] = {**act["move"], "to_square": _label(act["move"]["to"])}
+            _log(camp, "move", f"{m['name']} moves to {_label(act['move']['to'])}.")
         if act["action"] == "attack":
             tgt, report["attacks"] = ids[act["target"]], []
             for res, outcome in zip(act["attacks"], act["outcomes"]):
@@ -543,7 +567,8 @@ def _state(camp: dict, who: dict) -> dict:
     return {"chat": camp["chat"], "scene": camp["scene"], "round": camp["round"], "in_combat": camp["in_combat"],
             "active": camp["active"], "initiative": camp["initiative"], "you_control": mine,
             "you_are_game_master": _is_gm(camp, who),
-            "grid": {"width": GRID_W, "height": GRID_H, "feet_per_square": FEET},
+            "grid": {"width": GRID_W, "height": GRID_H, "feet_per_square": FEET, "columns": f"A-{chr(64 + GRID_W)}",
+                     "rows": f"1-{GRID_H}", "squares": "name a square by its label such as C4; pos is [column letter index from A=0, row number minus 1]"},
             "creatures": [{**_brief(c), "attacks": [a["name"] for a in c["attacks"]], "spells": c["spells"],
                            "slots": c["slots"], "concentration": c["concentration"], "effects": c["effects"],
                            "death_saves": c["death_saves"], "turn": c["turn"]} for c in camp["creatures"]]}
@@ -651,8 +676,10 @@ def tk_attack(args):
 
 def _destination(camp: dict, c: dict, args: dict) -> list[int]:
     """x,y (or a to=[x,y] pair), or the free square within reach of the movement left that is closest to `toward`."""
-    to = args.get("to") or args.get("position")
-    if isinstance(to, (list, tuple)) and len(to) == 2 and "x" not in args:
+    to = args.get("square") or args.get("to") or args.get("position")
+    if isinstance(to, str) and "x" not in args:
+        args = {**args, **dict(zip("xy", _parse_square(to)))}
+    elif isinstance(to, (list, tuple)) and len(to) == 2 and "x" not in args:
         args = {**args, "x": to[0], "y": to[1]}
     if args.get("toward") and "x" not in args:
         goal = _find(camp, args["toward"])
@@ -668,18 +695,40 @@ def _destination(camp: dict, c: dict, args: dict) -> list[int]:
     return [_int(args, "x", None, 0, GRID_W - 1), _int(args, "y", None, 0, GRID_H - 1)]
 
 
+def _stand(camp: dict, c: dict) -> int:
+    """Stand a prone creature up for half its speed (SRD 5.1). Returns the feet of movement spent."""
+    if "prone" not in c["conditions"]:
+        raise Refusal("not_prone", f"{c['name']} is not prone.")
+    speed = rules.effective_speed(c)
+    if speed == 0:
+        raise Refusal("cannot_stand", f"{c['name']}'s speed is 0, so they cannot stand up.")
+    cost = speed // 2
+    if cost > _speed_left(c):
+        raise Refusal("too_far", f"Standing up costs {cost} ft of movement (half speed); {c['name']} has {_speed_left(c)} ft left.",
+                      movement_left=_speed_left(c), cost=cost)
+    rules.remove_condition(c, "prone")
+    c["turn"]["moved"] += cost
+    _log(camp, "move", f"{c['name']} stands up ({cost} ft of movement).")
+    return cost
+
+
 @_tool
 def tk_move(args):
     who = _identity()
     camp = _load(who)
     c = _acting(camp, who, args.get("character"))
+    stand = bool(args.get("stand"))
+    stood = _stand(camp, c) if stand else 0
+    if stand and not any(args.get(k) is not None for k in ("x", "to", "position", "square", "toward")):
+        _save(camp)
+        return _ok(character=c["id"], stood_up=True, stand_cost_ft=stood, square=_label(c["pos"]), movement_left=_speed_left(c))
     disengage = bool(args.get("disengage")) and camp["in_combat"]
     if disengage and c["turn"]["action"]:
         raise Refusal("action_used", f"{c['name']} already used their action this turn.")
     mv = _walk(camp, c, _destination(camp, c, args))
     if disengage:
         c["turn"]["action"] = True
-    _log(camp, "move", f"{c['name']} moves to ({mv['to'][0]},{mv['to'][1]}).")
+    _log(camp, "move", f"{c['name']} moves to {mv['to_square']}.")
     ids, reactions = _by_id(camp), []
     if camp["in_combat"] and not disengage:
         for oid in mv["left_reach_of"]:
@@ -690,7 +739,8 @@ def tk_move(args):
                 reactions.append(_strike(camp, foe, c, melee_attacks[0], melee=True, dist=min(_reach(foe), _dist(foe, c))))
     extra = _close_if_over(camp)
     _save(camp)
-    return _ok(character=c["id"], **mv, movement_left=_speed_left(c), opportunity_attacks=reactions, **extra)
+    return _ok(character=c["id"], **mv, movement_left=_speed_left(c), opportunity_attacks=reactions,
+               **({"stood_up": True, "stand_cost_ft": stood} if stand else {}), **extra)
 
 
 def _targets(camp: dict, args: dict) -> list[dict]:
@@ -843,6 +893,9 @@ def _spawn_monsters(camp: dict, specs) -> list[dict]:
             if len(made) >= MAX_MONSTERS:
                 raise Refusal("too_many", f"At most {MAX_MONSTERS} monsters per fight.")
             n = 1 + sum(1 for c in camp["creatures"] if c["id"].startswith(key + "-"))
+            sq = spec.get("square") or spec.get("position") or spec.get("at")
+            if isinstance(sq, str) and "x" not in spec:
+                spec = {**spec, **dict(zip("xy", _parse_square(sq)))}
             anchor = [_int(spec, "x", None, 0, GRID_W - 1), _int(spec, "y", None, 0, GRID_H - 1)] if "x" in spec else None
             pos = _nearest_free(camp, anchor) if anchor and count > 1 else _spawn_pos(camp, "monster", anchor)
             m = srd.new_monster(key, id=f"{key}-{n}", name=f"{srd.MONSTERS[key]['name']} {n}", pos=pos)
@@ -984,8 +1037,8 @@ def _map(camp: dict) -> str:
     for c in sorted(camp["creatures"], key=lambda c: not _dead(c)):
         x, y = c["pos"]
         grid[y][x] = "x" if _dead(c) else glyph.get(c["id"], "?")
-    rows = ["    " + "".join(f"{x:<3}" for x in range(GRID_W))]
-    rows += [f"{y:>2}  " + "".join(f"{cell:<3}" for cell in row) for y, row in enumerate(grid)]
+    rows = ["    " + "".join(f"{chr(65 + x):<3}" for x in range(GRID_W))]
+    rows += [f"{y + 1:>2}  " + "".join(f"{cell:<3}" for cell in row) for y, row in enumerate(grid)]
     legend = [f"{glyph.get(c['id'], '?')} {c['name']} {c['hp']}/{c['max_hp']} HP"
               + (f" [{rules.state(c)}]" if rules.state(c) != "ok" else "") for c in camp["creatures"] if not _dead(c)]
     return "```\n" + "\n".join(rows) + "\n```\n" + "\n".join(legend)
@@ -994,7 +1047,7 @@ def _map(camp: dict) -> str:
 def _status_text(camp: dict) -> str:
     head = f"Round {camp['round']}, {_by_id(camp)[camp['active']]['name']}'s turn." if camp["in_combat"] else "No combat running."
     return "\n".join([head] + [
-        f"{c['name']} ({c['id']}) {c['hp']}/{c['max_hp']} HP, AC {c['ac']}, at ({c['pos'][0]},{c['pos'][1]})"
+        f"{c['name']} ({c['id']}) {c['hp']}/{c['max_hp']} HP, AC {c['ac']}, at {_label(c['pos'])}"
         + (f", {rules.state(c)}" if rules.state(c) != "ok" else "") for c in camp["creatures"]])
 
 
@@ -1025,7 +1078,7 @@ def _command(raw_args: str, *, platform: str = "", source=None, session_id: str 
             if sub == "claim":
                 claimed = _claim(camp, who, rest)
                 _save(camp)
-                return f"{claimed['name']} claimed at ({claimed['pos'][0]},{claimed['pos'][1]})."
+                return f"{claimed['name']} claimed at {claimed['square']}."
             if sub == "end":
                 res = _end_combat(camp, who)
                 _save(camp)
@@ -1050,7 +1103,7 @@ def _line(c: dict) -> str:
     flags = ([rules.state(c)] if rules.state(c) != "ok" else []) + [x for x in c["conditions"] if x not in ("dead", "stable")]
     temp = f"+{c['temp_hp']}t" if c["temp_hp"] else ""
     return (f"- {c['id']} \"{c['name']}\" HP {c['hp']}/{c['max_hp']}{temp} AC {rules.effective_ac(c)} "
-            f"at ({c['pos'][0]},{c['pos'][1]})" + (f" [{', '.join(dict.fromkeys(flags))}]" if flags else ""))
+            f"at {_label(c['pos'])}" + (f" [{', '.join(dict.fromkeys(flags))}]" if flags else ""))
 
 
 def _context_text(camp: dict, who: dict) -> str:
@@ -1070,6 +1123,9 @@ def _context_text(camp: dict, who: dict) -> str:
     for c in pcs:
         if c["id"] in mine and rules.state(c) == "down":
             head.append(f"{c['id']} is at 0 HP: their only roll is tk_death_save (not tk_check or tk_save).")
+    for c in pcs:
+        if c["id"] in mine and "prone" in c["conditions"] and rules.can_act(c):
+            head.append(f"{c['id']} is prone: tk_move with stand=true stands up for half its speed; moving without it is crawling.")
     if not camp["in_combat"] and not foes:
         head.append("No foes yet: tk_start_combat spawns monsters (one entry per type with count; x,y optional).")
     text = "\n".join(head + ["Party:"] + [_line(c) for c in pcs] + (["Foes:"] + [_line(c) for c in foes] if foes else []))
@@ -1129,7 +1185,8 @@ _DEATH_WORDS = re.compile(r"\b(?:dies|died|dead|falls|fallen|collapses|slain|kil
 _CLAUSE_BREAK = re.compile(r"[,;:]|\b(?:and|then|but|while|as|before|after)\s+(?-i:[A-Z])", re.I)  # the verb has another subject
 _SUBJECT_CUE = re.compile(r"(?:[.!?,;:\n\"'(*_)-]|\b(?:and|but|then|while|as|when|until|before|after|meanwhile|now))\s*(?:the\s+)?$", re.I)  # name opens a clause
 _DAMAGE = re.compile(r"\b(\d{1,4})\s*(?:points?\s+of\s+)?(?:[a-z]+\s+)?damage\b", re.I)
-_HIT_POINTS = re.compile(r"\b(\d{1,4})\s*(?:hp|hit\s+points?)\b", re.I)
+_HIT_POINTS = re.compile(r"\b(?:(\d{1,4})\s*/\s*)?(\d{1,4})\s*(?:hp|hit\s+points?)\b|\bhp[\s:]*(\d{1,4})(?:\s*/\s*(\d{1,4}))?", re.I)  # N HP, N/M HP, HP N/M
+_MARKDOWN = re.compile(r"[*_`]+")  # emphasis and code ticks the model wraps around numbers
 _CLAIMED_ROLL = re.compile(r"\b(?:rolls?|rolled|rolling|natural|nat)\s+(?:a\s+|an\s+)?(?:natural\s+)?(?:total\s+of\s+)?(\d{1,3})\b", re.I)
 _CLAIMED_AC = re.compile(r"\bAC\s*(\d{1,2})\b")
 _CLAIMED_DC = re.compile(r"\bDC\s*(\d{1,2})\b")
@@ -1146,12 +1203,14 @@ def _check_narration(text: str, camp: dict, produced: set) -> list[str]:
                     problems.append(f"{c['name']} is at 0 HP ({c['status']}) and cannot act")
                     break
     hp = {n for c in creatures for n in (c["hp"], c["max_hp"], c["temp_hp"])}
+    flat = _MARKDOWN.sub("", text)
     for pattern, label, known in ((_DAMAGE, "damage figure", produced),
                                   (_HIT_POINTS, "hit point figure", produced | hp),
                                   (_CLAIMED_ROLL, "dice roll", produced),
                                   (_CLAIMED_AC, "AC", produced | {rules.effective_ac(c) for c in creatures}),
                                   (_CLAIMED_DC, "DC", produced | {10})):  # 10 is the fixed death save DC, quoted as a rule
-        bad = sorted({int(n) for n in pattern.findall(text) if int(n) not in known})
+        figures = {int(n) for m in pattern.finditer(flat) for n in m.groups() if n}
+        bad = sorted(figures - known)
         if bad:
             problems.append(f"{label} {', '.join(map(str, bad))} was not returned by a tk_ tool this turn")
     return problems
@@ -1195,7 +1254,7 @@ _ROLL = {"advantage": _flag("Grant advantage if the situation earns it."),
          "disadvantage": _flag("Impose disadvantage if the situation earns it.")}
 _MONSTER = _obj([], type=_str("goblin, hobgoblin, kobold, wolf, dire_wolf, skeleton, zombie, orc, bandit, "
                                     "bandit_captain, giant_rat or ogre."),
-                count=_num("How many, default 1."), x=_num("Column to place it, or to cluster a group around."), y=_num("Row to place it, or to cluster a group around."))
+                count=_num("How many, default 1."), square=_str("Square label such as K5 to place it, or to cluster a group around."), x=_num("Column index (0 is A) instead of square."), y=_num("Row index (0 is row 1) instead of square."))
 
 TOOLS = [
     ("tk_state", tk_state, "Read the authoritative campaign: grid, initiative, every creature's HP, position and conditions, and which characters the sender controls. Call it before narrating state and whenever unsure.", _obj()),
@@ -1206,7 +1265,7 @@ TOOLS = [
     ("tk_save", tk_save, "Roll a saving throw for the sender's character against a DC. Works any time and uses no action.", _obj(["ability", "dc"], character=_CHAR, ability=_str("str, dex, con, int, wis or cha."), dc=_num("Difficulty class, 1-40."), **_ROLL)),
     ("tk_attack", tk_attack, "Make a weapon attack for the sender's character on their turn. Rolls to hit against AC, applies damage and reports the result. Refuses when out of range or out of turn.", _obj(["target"], character=_CHAR, target=_str("Enemy id such as goblin-1 (a name like Goblin 1 also works)."), attack=_str("Attack name, default the first."), cover=_num("0, 2 or 5."), **_ROLL)),
     ("tk_cast", tk_cast, "Cast a spell for the sender's character on their turn. Spends the slot, rolls attacks or saves and applies the results.", _obj(["spell"], character=_CHAR, spell=_str("Spell name, such as fire bolt."), targets={"type": "array", "items": {"type": "string"}, "description": "Creature ids; empty for self spells."}, slot_level=_num("Slot level to upcast with."))),
-    ("tk_move", tk_move, "Move the sender's character to a grid square (x 0-11, y 0-9, 5 ft per square), limited by speed. Give x and y, or toward=<creature id> to get adjacent. Leaving an enemy's reach provokes its opportunity attack unless disengage=true.", _obj([], character=_CHAR, x=_num("Column (with y)."), y=_num("Row (with x)."), toward=_str("Creature id to close in on: moves to the free square nearest it within movement left. Use instead of x and y to get next to a foe."), disengage=_flag("Spend the action to avoid opportunity attacks."))),
+    ("tk_move", tk_move, "Move the sender's character to a grid square, limited by speed (5 ft per square). Name the square by its pane label such as C4 (columns A-L, rows 1-10), or give x and y (0-based: x 0 is column A, y 0 is row 1), or toward=<creature id> to get adjacent. Leaving an enemy's reach provokes its opportunity attack unless disengage=true. A prone character must stand first: stand=true costs half its speed (SRD 5.1), alone or together with a destination; moving while prone without it is crawling at double cost.", _obj([], character=_CHAR, square=_str("Destination label such as C4, as the Desktop grid shows it."), x=_num("Column index, 0 is A (with y)."), y=_num("Row index, 0 is row 1 (with x)."), stand=_flag("Stand up from prone first (half speed). With no destination, only stands."), toward=_str("Creature id to close in on: moves to the free square nearest it within movement left. Use instead of x and y to get next to a foe."), disengage=_flag("Spend the action to avoid opportunity attacks."))),
     ("tk_next_turn", tk_next_turn, "End the active character's turn. Plays every monster turn until a character is up again and returns what the monsters did. The game master may pass end_combat=true.", _obj(end_combat=_flag("Game master only: end the fight now."))),
     ("tk_death_save", tk_death_save, "Roll a death saving throw for a character at 0 HP on their turn. It ends their turn. Use this, never tk_check or tk_save, whenever a character is at 0 HP.", _obj(character=_CHAR)),
     ("tk_rest", tk_rest, "Short rest (spend hit dice for one character) or long rest (game master, whole party). Not during combat.", _obj(["kind"], kind=_str("short or long."), character=_CHAR, hit_dice=_num("Hit dice to spend on a short rest."))),

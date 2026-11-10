@@ -132,6 +132,30 @@ class IdentityTests(LoadedPlugin):
         self.assertFalse(res["ok"])
         self.assertEqual(res["refused"], "identity_unavailable")
 
+    def test_a_turn_with_no_sender_that_is_not_an_interactive_session_gets_no_powers(self):
+        from gateway.session_context import clear_session_vars, set_session_vars
+        from tools.registry import registry
+
+        def dispatch(tool, args, **vars):
+            tokens = set_session_vars(platform=vars.pop("platform", ""), chat_id="", user_id="", **vars)
+            try:
+                return json.loads(registry.dispatch(tool, args, scope=self.mgr.scope_key))
+            finally:
+                clear_session_vars(tokens)
+
+        self.addCleanup(self.call, "tk_new_campaign", {"replace": True}, platform="cli", chat="")
+        self.assertTrue(self.call("tk_new_campaign", {"replace": True}, platform="cli", chat="")["ok"])
+        self.assertTrue(self.call("tk_claim_character", {"character": "fighter"}, platform="cli", chat="")["ok"])
+        for how in ({"cron_session": "1"}, {"source": "kanban"}, {"source": "webhook"}):
+            for tool, args in (("tk_damage", {"target": "fighter", "amount": 5}), ("tk_condition", {"target": "fighter", "condition": "prone"}),
+                               ("tk_check", {"character": "fighter", "skill_or_ability": "athletics", "dc": 5}), ("tk_state", {})):
+                res = dispatch(tool, args, **how)
+                self.assertEqual((res["ok"], res["refused"]), (False, "identity_unavailable"), (how, tool))
+        fighter = next(c for c in dispatch("tk_state", {}, source="desktop")["creatures"] if c["id"] == "fighter")
+        self.assertEqual((fighter["hp"], fighter["conditions"]), (28, []), "no unattended turn changed the local campaign")
+        for how in ({}, {"source": "cli"}, {"source": "tui"}, {"source": "desktop"}, {"platform": "acp"}):
+            self.assertTrue(dispatch("tk_damage", {"target": "fighter", "amount": 1}, **how)["ok"], how)
+
     def test_character_acts_only_for_its_owner(self):
         res = self.call("tk_check", {"character": "fighter", "skill_or_ability": "athletics", "dc": 10}, user=BOB, chat=self.chat)
         self.assertEqual((res["ok"], res["refused"]), (False, "not_owner"))
@@ -339,6 +363,59 @@ class TableRuleTests(LoadedPlugin):
         self.assertEqual(moved["opportunity_attacks"], [])
         again = self.call("tk_attack", {"character": "rogue", "target": "goblin-1"}, user=BOB, chat=self.chat)
         self.assertEqual(again["refused"], "action_used")
+
+    def test_standing_from_prone_costs_half_the_speed_and_then_walking_is_not_crawling(self):
+        self.fight(1, [{"type": "goblin", "x": 11, "y": 0}], "rogue")
+        self.assertEqual(self.call("tk_move", {"character": "rogue", "stand": True}, user=BOB, chat=self.chat)["refused"], "not_prone")
+        self.call("tk_condition", {"target": "rogue", "condition": "prone"}, chat=self.chat)
+        stood = self.call("tk_move", {"character": "rogue", "stand": True}, user=BOB, chat=self.chat)
+        self.assertTrue(stood["ok"], stood)
+        self.assertEqual((stood["stood_up"], stood["stand_cost_ft"], stood["movement_left"]), (True, 12, 13))
+        self.assertNotIn("prone", self.creature(self.chat, "rogue")["conditions"])
+        x, y = self.creature(self.chat, "rogue")["pos"]
+        self.assertEqual(self.call("tk_move", {"character": "rogue", "x": x + 3, "y": y}, user=BOB, chat=self.chat)["refused"], "too_far")
+        walked = self.call("tk_move", {"character": "rogue", "x": x + 2, "y": y}, user=BOB, chat=self.chat)
+        self.assertEqual((walked["ok"], walked["movement_left"]), (True, 3), "standing was 12 ft of the rogue's 25, then 10 ft of plain walking")
+
+    def test_stand_and_move_in_one_call_and_standing_needs_the_movement(self):
+        self.fight(1, [{"type": "goblin", "x": 11, "y": 0}], "rogue")
+        self.call("tk_condition", {"target": "rogue", "condition": "prone"}, chat=self.chat)
+        x, y = self.creature(self.chat, "rogue")["pos"]
+        moved = self.call("tk_move", {"character": "rogue", "stand": True, "x": x + 2, "y": y}, user=BOB, chat=self.chat)
+        self.assertTrue(moved["ok"], moved)
+        self.assertEqual((moved["stood_up"], moved["movement_left"], moved["feet"]), (True, 3, 10))
+        self.call("tk_condition", {"target": "rogue", "condition": "prone"}, chat=self.chat)
+        spent = self.call("tk_move", {"character": "rogue", "stand": True}, user=BOB, chat=self.chat)
+        self.assertEqual(spent["refused"], "too_far")
+        self.assertIn("prone", self.creature(self.chat, "rogue")["conditions"], "a refused stand leaves the creature prone")
+
+    def test_a_creature_that_cannot_move_cannot_stand(self):
+        self.fight(1, [{"type": "goblin", "x": 11, "y": 0}], "rogue")
+        for cond in ("prone", "restrained"):
+            self.call("tk_condition", {"target": "rogue", "condition": cond}, chat=self.chat)
+        self.assertEqual(self.call("tk_move", {"character": "rogue", "stand": True}, user=BOB, chat=self.chat)["refused"], "cannot_stand")
+
+    def test_squares_are_named_as_the_pane_labels_them(self):
+        self.seed(1)
+        self.party(self.chat)
+        start = self.call("tk_start_combat", {"monsters": [{"type": "goblin", "square": "k5"}, {"type": "kobold", "at": "L10"}]}, chat=self.chat)
+        self.assertTrue(start["ok"], start)
+        self.assertEqual(self.creature(self.chat, "goblin-1")["pos"], [10, 4])
+        self.assertEqual(self.creature(self.chat, "kobold-1")["pos"], [11, 9])
+        self.assertEqual(self.creature(self.chat, "goblin-1")["square"], "K5")
+        self.advance_to(self.chat, "rogue")
+        x, y = self.creature(self.chat, "rogue")["pos"]
+        self.assertEqual((x, y), (0, 4))
+        moved = self.call("tk_move", {"character": "rogue", "square": "C4"}, user=BOB, chat=self.chat)
+        self.assertTrue(moved["ok"], moved)
+        self.assertEqual((moved["from_square"], moved["to_square"], moved["to"]), ("A5", "C4", [2, 3]))
+        self.assertEqual(self.creature(self.chat, "rogue")["square"], "C4")
+        self.assertEqual(self.call("tk_move", {"character": "rogue", "to": "D4"}, user=BOB, chat=self.chat)["to_square"], "D4")
+        self.assertEqual(self.call("tk_move", {"character": "rogue", "x": 4, "y": 3}, user=BOB, chat=self.chat)["to_square"], "E4")
+        for bad in ("M4", "A11", "A0", "C", "44"):
+            res = self.call("tk_move", {"character": "rogue", "square": bad}, user=BOB, chat=self.chat)
+            self.assertIn(res["refused"], ("off_grid", "invalid_input"), bad)
+        self.assertEqual(self.call("tk_move", {"character": "rogue", "square": "K5"}, user=BOB, chat=self.chat)["refused"], "occupied")
 
     def test_dying_character_rolls_death_saves_on_their_turn_and_it_ends_the_turn(self):
         self.fight(3, [{"type": "goblin", "x": 11, "y": 0}], "rogue")
@@ -561,6 +638,11 @@ class CommandTests(LoadedPlugin):
         self.assertTrue(grid.startswith("```"))
         self.assertIn("A Brann Hollis", grid)
         self.assertIn("1 Goblin 1", grid)
+        lines = grid.splitlines()
+        self.assertEqual(lines[1].split(), list("ABCDEFGHIJKL"))
+        self.assertEqual([row.split()[0] for row in lines[2:12]], [str(n) for n in range(1, 11)])
+        self.assertRegex(self.command("status"), r"Brann Hollis \(fighter\) 28/28 HP, AC 18, at [A-L]\d{1,2}")
+        self.assertNotRegex(self.command("status"), r"at \(")
         self.assertIn("Combat begins", self.command("log") + self.command("recap"))
         self.assertIn("Combat ended", self.command("end"))
         self.assertIn("goblin-1", self.command("status"))
