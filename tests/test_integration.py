@@ -208,7 +208,8 @@ class CombatTests(LoadedPlugin):
         res = self.start(6, [{"type": "goblin", "x": 11, "y": 0}])
         active = res["active"]["id"]
         user = self.owner_of(active)
-        far = self.call("tk_attack", {"character": active, "target": "goblin-1"}, user=user, chat=self.chat)
+        melee = next(c for c in self.state(self.chat)["creatures"] if c["id"] == active)["attacks"][0]
+        far = self.call("tk_attack", {"character": active, "target": "goblin-1", "attack": melee}, user=user, chat=self.chat)
         self.assertEqual(far["refused"], "out_of_range")
         pos = next(c for c in self.state(self.chat)["creatures"] if c["id"] == active)["pos"]
         moved = self.call("tk_move", {"character": active, "x": 10, "y": 0}, user=user, chat=self.chat)
@@ -652,3 +653,35 @@ class LivePlayTests(LoadedPlugin):
     def test_new_campaign_reads_the_scene_from_the_names_a_model_uses(self):
         self.assertTrue(self.cli("tk_new_campaign", {"replace": True, "description": "A dark cave"})["ok"])
         self.assertEqual(self.cli("tk_state")["scene"], "A dark cave")
+
+    def far_goblin(self):
+        self.spawn_goblins(monsters=[{"type": "goblin", "x": 11, "y": 5}])
+        for _ in range(8):
+            if self.cli("tk_state")["active"] == "fighter":
+                return
+            self.cli("tk_next_turn")
+
+    def test_attack_argument_names_a_model_reaches_for_are_honoured(self):
+        self.far_goblin()
+        res = self.cli("tk_attack", {"attacker": "fighter", "target": "goblin-1", "attack_name": "Longbow"})
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["attack"], "Longbow")
+        self.assertFalse(res["melee"])
+
+    def test_attack_without_a_weapon_picks_one_that_reaches(self):
+        self.far_goblin()
+        res = self.cli("tk_attack", {"target": "goblin 1"})
+        self.assertEqual((res["ok"], res["attack"]), (True, "Longbow"))
+
+    def test_attack_refusals_list_the_attacks_to_choose_from(self):
+        self.far_goblin()
+        res = self.cli("tk_attack", {"target": "goblin-1", "attack": "Longsword"})
+        self.assertEqual(res["refused"], "out_of_range")
+        self.assertIn("Longbow (ranged 600 ft)", res["message"])
+        res = self.cli("tk_attack", {"target": "goblin-1", "attack": "fireball"})
+        self.assertEqual(res["refused"], "unknown_attack")
+        self.assertIn("Longsword (melee 5 ft)", res["message"])
+
+    def test_alias_does_not_override_the_real_argument(self):
+        self.cli("tk_claim_character", {"character": "wizard"})
+        self.assertEqual(self.cli("tk_check", {"character": "wizard", "attacker": "fighter", "skill_or_ability": "arcana"})["character"], "wizard")

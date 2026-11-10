@@ -399,12 +399,21 @@ def _ok(**fields) -> dict:
     return {"ok": True, **fields}
 
 
+# argument names a model reaches for when the schema is a tool_search away; the canonical name wins when both appear
+ALIASES = {"attacker": "character", "actor": "character", "caster": "character", "attack_name": "attack",
+           "weapon": "attack", "spell_name": "spell", "targets_ids": "targets", "creature": "target"}
+
+
+def _canonical(args: dict) -> dict:
+    return {**{ALIASES[k]: v for k, v in args.items() if k in ALIASES and ALIASES[k] not in args}, **args}
+
+
 def _tool(fn):
     """Serialise a tool body and return rule refusals and bad input as explicit JSON results."""
     def handler(args, **_ctx):
         try:
             with LOCK:
-                result = fn(args if isinstance(args, dict) else {})
+                result = fn(_canonical(args) if isinstance(args, dict) else {})
         except Refusal as r:
             result = {"ok": False, "refused": r.code, "message": r.message, **r.extra}
         except rules.RuleError as e:
@@ -611,16 +620,24 @@ def tk_attack(args):
         raise Refusal("friendly_target", "Attacks target enemies. The game master rules harm to allies with tk_damage.")
     if _dead(tgt):
         raise Refusal("invalid_target", f"{tgt['name']} is already dead.")
-    name = _text(args, "attack", required=False).lower()
-    atk = next((a for a in att["attacks"] if a["name"].lower() == name), None) if name else att["attacks"][0]
+    name = _slug(_text(args, "attack", required=False))
+    dist = _dist(att, tgt)
+    options = ", ".join(f"{a['name']} ({'melee ' + str(a['reach']) + ' ft' if a.get('reach') else 'ranged ' + str(a['range'][1]) + ' ft'})"
+                        for a in att["attacks"])
+    if name:
+        atk = next((a for a in att["attacks"] if _slug(a["name"]) == name), None) \
+            or next((a for a in att["attacks"] if name in _slug(a["name"])), None)
+    else:  # no weapon named: the first attack that reaches the target, else the first
+        atk = next((a for a in att["attacks"] if dist <= (a.get("reach") or 0) or dist <= (a["range"][1] if a.get("range") else 0)),
+                   att["attacks"][0])
     if atk is None:
-        raise Refusal("unknown_attack", f"{att['name']} can attack with: {', '.join(a['name'] for a in att['attacks'])}.")
-    dist, reach = _dist(att, tgt), atk.get("reach")
+        raise Refusal("unknown_attack", f"{att['name']} can attack with: {options}.")
+    reach = atk.get("reach")
     normal, longest = atk["range"] if atk.get("range") else (0, 0)
     melee = bool(reach) and dist <= reach
     if not melee and not (longest and dist <= longest):
         raise Refusal("out_of_range", f"{tgt['name']} is {dist} ft from {att['name']}; {atk['name']} reaches "
-                      f"{reach or longest} ft. Use tk_move first.", distance_ft=dist)
+                      f"{reach or longest} ft. Attacks: {options}. Use tk_move first, or name another attack.", distance_ft=dist)
     res = _strike(camp, att, tgt, atk, melee=melee, dist=dist, advantage=bool(args.get("advantage")),
                   disadvantage=bool(args.get("disadvantage")) or (not melee and dist > normal),
                   cover=_int(args, "cover", 0, 0, 5))
