@@ -664,9 +664,12 @@ class LivePlayTests(LoadedPlugin):
     def test_attack_argument_names_a_model_reaches_for_are_honoured(self):
         self.far_goblin()
         res = self.cli("tk_attack", {"attacker": "fighter", "target": "goblin-1", "attack_name": "Longbow"})
-        self.assertTrue(res["ok"], res)
-        self.assertEqual(res["attack"], "Longbow")
-        self.assertFalse(res["melee"])
+        self.assertEqual((res["ok"], res["attack"], res["melee"]), (True, "Longbow", False))
+
+    def test_a_named_weapon_is_used_not_swapped_for_one_that_reaches(self):
+        self.far_goblin()
+        res = self.cli("tk_attack", {"target": "goblin-1", "weapon": "longsword"})
+        self.assertEqual(res["refused"], "out_of_range")
 
     def test_attack_without_a_weapon_picks_one_that_reaches(self):
         self.far_goblin()
