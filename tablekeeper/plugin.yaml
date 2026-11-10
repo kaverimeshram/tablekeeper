@@ -1,27 +1,33 @@
 manifest_version: 2
 name: tablekeeper
-version: "0.1.0"
-requires_hermes: ">=0.23.0"
-description: Code-authoritative tabletop RPG campaigns for Hermes group chats.
-author: geniusamansingh
-license: CC-BY-4.0
+version: "0.2.0"
+requires_hermes: ">=0.23.1"
+description: >-
+  Tabletop RPG campaigns for Hermes group chats. Code rolls the dice and owns hit points, positions,
+  initiative and turn order, each player controls only their own character, and the model narrates
+  the results. SRD 5.1 monsters, characters and spells.
+author: kaverimeshram
+license: MIT
+tags: [games, rpg, groups]
 provides_tools:
   - tk_state
+  - tk_new_campaign
+  - tk_claim_character
   - tk_roll
   - tk_check
+  - tk_save
   - tk_attack
   - tk_cast
-  - tk_damage
-  - tk_start_combat
+  - tk_move
   - tk_next_turn
-  - tk_monster_turn
-  - tk_rest
-  - tk_condition
   - tk_death_save
-  - tk_claim_character
+  - tk_rest
+  - tk_start_combat
+  - tk_damage
+  - tk_heal
+  - tk_condition
+  - tk_recap
 provides_hooks:
   - pre_llm_call
   - post_tool_call
   - transform_llm_output
-provides_commands:
-  - table
