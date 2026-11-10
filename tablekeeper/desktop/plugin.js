@@ -122,7 +122,7 @@ const STYLE = `
 @keyframes tk-pulse{0%,100%{opacity:.95;transform:scale(1)}50%{opacity:.3;transform:scale(1.16)}}
 @keyframes tk-float{0%{opacity:0;transform:translateY(0)}12%{opacity:1}100%{opacity:0;transform:translateY(-34px)}}
 @keyframes tk-tumble{0%{opacity:0;transform:rotate(-260deg) scale(.2) translateY(-14px)}60%{opacity:1}100%{opacity:1;transform:rotate(0) scale(1) translateY(0)}}
-@container (min-width:900px){.tk-wrap{height:100%}.tk-layout{flex:1;min-height:0;grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr);grid-template-rows:auto minmax(0,1fr)}.tk-frame{grid-area:1/1}.tk-logp{grid-area:2/1;max-height:100%}.tk-logp .tk-log{max-height:none;flex:1}.tk-side{grid-area:1/2/3/2;max-height:100%;overflow:auto;padding-right:2px}}
+@container (min-width:900px){.tk-layout[data-view="3d"]{grid-template-columns:minmax(0,2fr) minmax(320px,1fr)}.tk-wrap{height:100%}.tk-layout{flex:1;min-height:0;grid-template-columns:minmax(0,1.5fr) minmax(340px,1fr);grid-template-rows:auto minmax(0,1fr)}.tk-frame{grid-area:1/1}.tk-logp{grid-area:2/1;max-height:100%}.tk-logp .tk-log{max-height:none;flex:1}.tk-side{grid-area:1/2/3/2;max-height:100%;overflow:auto;padding-right:2px}}
 @media (prefers-reduced-motion:reduce){.tk *{animation:none!important;transition:none!important}}
 `
 
@@ -1043,9 +1043,14 @@ function feltSheet(size, tint, speckle = 0.16) {
 const BOARD_W = 13, BOARD_D = 11
 /** The felt: 12 by 10 squares with hairline grid, a brass keyline and A-L / 1-10 labels on every edge. Mapped 1:1 onto the felt quad. */
 function boardSheet(size = 2048) {
-  const c = feltSheet(size, paint(152, 0.5, 0.26), 0.5)
+  const c = feltSheet(size, paint(150, 0.4, 0.22), 0.42)
   const g = c.getContext('2d')
   const sx = size / BOARD_W, sy = size / BOARD_D
+  const edge = g.createRadialGradient(size / 2, size / 2, size * 0.22, size / 2, size / 2, size * 0.78)
+  edge.addColorStop(0, css([0, 0, 0], 0))
+  edge.addColorStop(1, css([0, 0, 0], 0.5))
+  g.fillStyle = edge
+  g.fillRect(0, 0, size, size)
   g.setTransform(sx, 0, 0, sy, (BOARD_W / 2) * sx, (BOARD_D / 2) * sy)
   const cream = paint(44, 0.35, 0.86)
   for (let x = 0; x < COLS; x++) for (let y = 0; y < ROWS; y++) {
@@ -1111,11 +1116,12 @@ const SUN = vnorm([-0.5, 0.82, -0.3])
 const CANDLES = [[-7.9, -6.2], [7.8, -6.0]]
 const FOV = (38 * Math.PI) / 180
 const SHADOW_SIZE = 2048
+const MINI_SCALE_UP = 1.12
 const HOME = { az: 0, el: 0.74, zoom: 1 }
 const TONE_VARS = ['bg-editor', 'bg-elevated', 'red', 'green', 'yellow', 'blue', 'purple', 'cyan', 'orange', 'accent', 'accent-secondary', 'text-primary', 'text-secondary']
 const TONE_FALLBACK = { 'bg-editor': [0.1, 0.1, 0.12], 'bg-elevated': [0.16, 0.16, 0.19], red: [0.9, 0.3, 0.3], green: [0.35, 0.78, 0.45], yellow: [0.95, 0.8, 0.3], blue: [0.35, 0.55, 0.95], purple: [0.65, 0.45, 0.9], cyan: [0.35, 0.8, 0.85], orange: [0.95, 0.6, 0.3], accent: [0.45, 0.6, 1], 'accent-secondary': [0.9, 0.5, 0.8], 'text-primary': [0.95, 0.95, 0.95], 'text-secondary': [0.7, 0.7, 0.75] }
 
-const FIT_POINTS = [[-7.1, 0.2, -6.1], [7.1, 0.2, -6.1], [-7.1, 0.2, 6.1], [7.1, 0.2, 6.1], [-5.4, 0.5, 6.35 + 3.1], [5.4, 0.5, 6.35 + 3.1], [-5.4, 0.5, 10.85], [5.4, 0.5, 10.85], [-6, 1.9, -5], [6, 1.9, -5]]
+const FIT_POINTS = [[-7.1, 0.2, -6.1], [7.1, 0.2, -6.1], [-7.1, 0.2, 6.1], [7.1, 0.2, 6.1], [-4.4, 0.5, 6.35 + 3.0], [4.4, 0.5, 6.35 + 3.0], [-4.4, 0.5, 10.0], [4.4, 0.5, 10.0], [-6, 1.9, -5], [6, 1.9, -5]]
 const FIT_TARGET = [0, 0.4, 2.2]
 const fitMemo = new Map()
 /** Camera distance that frames the felt, the minis' height and the dice tray at the home angle for a given aspect ratio. */
@@ -1125,7 +1131,7 @@ export function fitDistance(aspect, el = HOME.el) {
   const proj = m4persp(FOV, aspect, 0.5, 140)
   const inside = d => {
     const m = m4mul(proj, m4look(orbitEye(FIT_TARGET, 0, el, d), FIT_TARGET))
-    return FIT_POINTS.every(p => { const c = m4xf(m, p); return c[3] > 0 && Math.abs(c[0] / c[3]) <= 0.95 && Math.abs(c[1] / c[3]) <= 0.93 })
+    return FIT_POINTS.every(p => { const c = m4xf(m, p); return c[3] > 0 && Math.abs(c[0] / c[3]) <= 0.97 && Math.abs(c[1] / c[3]) <= 0.95 })
   }
   let lo = 4, hi = 90
   for (let k = 0; k < 22; k++) { const mid = (lo + hi) / 2; if (inside(mid)) hi = mid; else lo = mid }
@@ -1267,7 +1273,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   const white = texture(feltSheet(4, [1, 1, 1], 0), {})
   const dark = shade(ART.ink, 1)
   const statics = []
-  const place = (g, t, o = {}) => statics.push({ g, model: m4trs(t, [0, 0, 0, 1], [1, 1, 1]), tex: o.tex || woodTex, mode: o.mode ?? 1, spec: o.spec ?? 0.1, shine: o.shine ?? 14, cast: o.cast !== false })
+  const place = (g, t, o = {}) => statics.push({ g, model: m4trs(t, qaxis([0, 1, 0], o.yaw || 0), [1, 1, 1]), tex: o.tex || woodTex, mode: o.mode ?? 1, spec: o.spec ?? 0.1, shine: o.shine ?? 14, cast: o.cast !== false })
   const woodBox = (w, h, d, t, col = [1, 1, 1], uvs = 0.3, o = {}) => place(mergeMesh(box(w, h, d, uvs), col), t, o)
   place(mergeMesh(box(64, 0.6, 46, 0.075), [0.92, 0.92, 0.94]), [0, -0.3, 0], { cast: false, spec: 0.16, shine: 22 })
   // board slab, felt, and rim
@@ -1288,6 +1294,13 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   woodBox(0.55, lip, TRAY.d + 1.1, [TRAY.x + TRAY.w / 2 + 0.275, lip / 2, TRAY.z], [0.66, 0.62, 0.64], 0.4)
   woodBox(TRAY.w, lip, 0.55, [TRAY.x, lip / 2, TRAY.z - TRAY.d / 2 - 0.275], [0.66, 0.62, 0.64], 0.4)
   woodBox(TRAY.w, lip, 0.55, [TRAY.x, lip / 2, TRAY.z + TRAY.d / 2 + 0.275], [0.66, 0.62, 0.64], 0.4)
+  // props: coin stacks, a tankard and a closed book
+  const coinRnd = seeded(3)
+  for (const [cx, cz, n] of [[-9.1, 4.6, 7], [-8.5, 5.3, 4], [-9.7, 5.4, 3]]) for (let k = 0; k < n; k++) place(mergeMesh(cyl(0.24, 0.24, 0.05, 14), ART.gold, F_METAL), [cx + (coinRnd() - 0.5) * 0.05, k * 0.052, cz + (coinRnd() - 0.5) * 0.05], { mode: 0, spec: 0.3, yaw: coinRnd() * 3 })
+  place(mergeMesh(lathe([[0, 0], [0.4, 0], [0.45, 0.06], [0.42, 0.7], [0.36, 0.74], [0.32, 0.7], [0.3, 0.12], [0, 0.12]], 18), shade(ART.steel, 0.85), F_METAL), [9.6, 0, 6.2], { mode: 0, spec: 0.3 })
+  place(mergeMesh(xf(torus(0.2, 0.045, 14, 6), [0.5, 0.38, 0], [Math.PI / 2, 0, 0]), shade(ART.steel, 0.85), F_METAL), [9.6, 0, 6.2], { mode: 0, spec: 0.3 })
+  place(mergeMesh(box(1.5, 0.22, 1.05, 0.3), shade(ART.leather, 1.2)), [-9.6, 0.11, 0.8], { yaw: 0.35, spec: 0.2 })
+  place(mergeMesh(xf(box(1.4, 0.16, 0.96, 0.3), [0.04, 0, 0.02]), ART.cloth), [-9.6, 0.12, 0.8], { yaw: 0.35, mode: 0 })
   // candles
   const waxG = upload(combine([
     { m: lathe([[0, 0], [0.34, 0], [0.34, 0.06], [0.24, 0.1], [0, 0.1]], 16), col: shade(ART.gold, 0.75), flag: F_METAL },
@@ -1319,7 +1332,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   // ---------------------------------------------------------------- scene state
   const S = {
     time: 0, minis: new Map(), chat: undefined, seq: -1, queue: [], actions: [], dice: [], nextAt: 0, floats: [], shots: [], active: '', combat: false,
-    caption: null, hover: '', tray: null, frames: 0, fpsAt: 0, fps: 0
+    caption: null, hover: '', tray: null, frames: 0, fpsAt: 0, fps: 0, cpu: 0
   }
   const cam = { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, tz: 2.2, cur: { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, tz: 2.2 }, lastInput: -100, aspect: 1.6 }
   let vp = m4look([0, 5, 5], [0, 0, 0]), view = vp, eyePos = [0, 5, 5], size = [2, 2], dpr = 1
@@ -1521,13 +1534,13 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     m.yaw += d * (1 - Math.exp(-dt * 9))
     m.fall += (m.fallGoal - m.fall) * (1 - Math.exp(-dt * (m.fallGoal > m.fall ? 7 : 5)))
     const f = m.fall
-    const radius = m.geo.radius
+    const radius = m.geo.radius * MINI_SCALE_UP
     const breathe = 1 + Math.sin(t * 1.7 + m.phase) * 0.012 * (1 - f)
     const q = qmul(qaxis([0, 1, 0], m.yaw), qaxis([1, 0, 0], -f * 1.42))
     const lift = Math.sin(f * 1.42) * radius * 0.92
     const y = BOARD_Y + dy + lift
-    m.model = m4trs([m.pos[0] + dx, y, m.pos[1] + dz], q, [1, breathe, 1])
-    m.eyeAt = [m.pos[0] + dx, BOARD_Y + (m.geo.top || 1.2) * (1 - f * 0.8) + dy + 0.12, m.pos[1] + dz]
+    m.model = m4trs([m.pos[0] + dx, y, m.pos[1] + dz], q, [MINI_SCALE_UP, MINI_SCALE_UP * breathe, MINI_SCALE_UP])
+    m.eyeAt = [m.pos[0] + dx, BOARD_Y + (m.geo.top || 1.2) * MINI_SCALE_UP * (1 - f * 0.8) + dy + 0.12, m.pos[1] + dz]
     m.ground = [m.pos[0] + dx, m.pos[1] + dz]
     if (m.pending && t - m.pending > 6) commit(m)
     m.vf = m.vf == null ? m.v.frac : m.vf + (m.v.frac - m.vf) * (1 - Math.exp(-dt * 6))
@@ -1630,7 +1643,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       const dead = m.v.state === 'dead'
       drawSurf(m.geo, m.model, { team: col, flash: flashK > 0 ? [m.flash.tint[0], m.flash.tint[1], m.flash.tint[2], flashK * m.flash.strength] : D0.flash, desat: dead ? 0.92 : m.v.state === 'down' ? 0.45 : 0, glow: m.key === S.active ? [0.03, 0.03, 0.05] : D0.glow })
       // condition gems, concentration halo, death-save pips
-      const c = m.c, top = BOARD_Y + (m.geo.top || 1.2) + 0.3
+      const c = m.c, top = BOARD_Y + (m.geo.top || 1.2) * MINI_SCALE_UP + 0.3
       c.conditions.slice(0, 4).forEach((cond, k, all) => {
         const a = S.time * 1.1 + (k / all.length) * TAU
         drawSurf(gemG, m4trs([m.ground[0] + Math.cos(a) * 0.36, top + Math.sin(S.time * 2 + k) * 0.03, m.ground[1] + Math.sin(a) * 0.36], qaxis([0, 1, 0], S.time * 2), [0.15, 0.2, 0.15]), { team: toneOf(CONDITION_TONE[cond] || 'yellow') })
@@ -1648,7 +1661,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       if (!mm) continue
       const landed = d.pose.done
       const pulse = 0.5 + 0.5 * Math.sin(S.time * 4)
-      const glow = landed && d.crit ? [0.35 + 0.2 * pulse, 0.26 + 0.14 * pulse, 0.04] : landed && d.fumble ? [0.3 + 0.12 * pulse, 0.02, 0.02] : D0.glow
+      const glow = landed && d.crit ? [0.1 + 0.07 * pulse, 0.07 + 0.04 * pulse, 0.005] : landed && d.fumble ? [0.1 + 0.05 * pulse, 0.003, 0.003] : D0.glow
       drawSurf(d.g, mm, { tex: d.tex, mode: 2, body: d.palette.body, ink: d.palette.ink, desat: d.dropped ? 0.7 : 0, glow, spec: 0.3, shine: 60 })
     }
     for (const s of S.shots) {
@@ -1661,7 +1674,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     decal.use(); decal.m('uVP', vp); decal.f('uTime', S.time)
     for (const m of S.minis.values()) {
-      const r = m.geo.radius, fl = 1 - m.fall
+      const r = m.geo.radius * MINI_SCALE_UP, fl = 1 - m.fall
       drawDecal(flat(m.ground[0], BOARD_Y + 0.005, m.ground[1], r * (1.45 + m.fall * 0.4)), 0, [0.02, 0.01, 0.01], 0.55 * (0.4 + 0.6 * fl))
       const dead = m.v.state === 'dead'
       drawDecal(flat(m.ground[0], BOARD_Y + 0.008, m.ground[1], r * 1.2), 1, dead ? mixRgb(toneOf('text-secondary'), toneOf('bg-elevated'), 0.5) : hpColor(m.v.frac), dead ? 0.55 : 0.95, clamp(m.vf ?? m.v.frac, 0, 1))
@@ -1677,8 +1690,8 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const act = S.minis.get(S.active)
     if (act) {
       const a = toneOf('accent')
-      drawDecal(flat(act.ground[0], BOARD_Y + 0.01, act.ground[1], act.geo.radius * 1.9), 2, a, 0.9)
-      beamP.use(); beamP.m('uVP', vp); beamP.m('uModel', m4trs([act.ground[0], BOARD_Y, act.ground[1]], [0, 0, 0, 1], [act.geo.radius / 0.43, 1, act.geo.radius / 0.43])); beamP.m('uLVP', lvp)
+      drawDecal(flat(act.ground[0], BOARD_Y + 0.01, act.ground[1], act.geo.radius * MINI_SCALE_UP * 1.9), 2, a, 0.9)
+      beamP.use(); beamP.m('uVP', vp); beamP.m('uModel', m4trs([act.ground[0], BOARD_Y, act.ground[1]], [0, 0, 0, 1], [(act.geo.radius * MINI_SCALE_UP) / 0.43, 1, (act.geo.radius * MINI_SCALE_UP) / 0.43])); beamP.m('uLVP', lvp)
       beamP.v3('uCam', eyePos); beamP.v3('uGlow', a); beamP.f('uA', 0.5 + 0.1 * Math.sin(S.time * 2.4))
       bindGeo(beamG); gl.drawElements(gl.TRIANGLES, beamG.n, gl.UNSIGNED_SHORT, 0)
       decal.use()
@@ -1775,6 +1788,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     if (disposed || !running) return
     const dt = clamp((now - last) / 1000, 0, 0.05)
     last = now
+    const began = performance.now()
     try {
       stepWorld(dt)
       stepCamera(dt)
@@ -1783,7 +1797,14 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       if (++themeTick % 150 === 0) readTheme()
     } catch (error) { stop(); hooks.onFail?.(error); return }
     S.frames++
-    if (now - S.fpsAt >= 1000) { S.fps = Math.round((S.frames * 1000) / (now - S.fpsAt)); S.frames = 0; S.fpsAt = now; canvas.dataset.fps = String(S.fps); canvas.dataset.minis = String(S.minis.size) }
+    S.cpu += performance.now() - began
+    if (now - S.fpsAt >= 1000) {
+      S.fps = Math.round((S.frames * 1000) / (now - S.fpsAt))
+      canvas.dataset.fps = String(S.fps)
+      canvas.dataset.cpuMs = (S.cpu / S.frames).toFixed(2)
+      canvas.dataset.minis = String(S.minis.size)
+      S.frames = 0; S.cpu = 0; S.fpsAt = now
+    }
     raf = window.requestAnimationFrame(frame)
   }
   function start() { if (running || disposed || !visible || document.hidden) return; running = true; last = performance.now(); S.fpsAt = last; S.frames = 0; raf = window.requestAnimationFrame(frame) }
@@ -2130,7 +2151,7 @@ export function TabletopView({ data, model, floats, fresh, uid, ctx, view = '2d'
           setView && h('div', { className: 'tk-seg', role: 'group', 'aria-label': 'Board view' },
             ['3d', '2d'].map(v => h('button', { key: v, type: 'button', className: 'tk-segb', 'aria-pressed': view === v, disabled: v === '3d' && !gl, title: v === '3d' && !gl ? 'WebGL is unavailable here' : `${v.toUpperCase()} board`, onClick: () => setView(v) }, v.toUpperCase()))),
           h('span', { className: 'tk-chip', title: ok ? 'Updating every second' : error }, h('i', { className: 'tk-live', 'data-ok': ok }), ok ? 'Live' : 'Reconnecting'))),
-      h('div', { className: 'tk-layout' },
+      h('div', { className: 'tk-layout', 'data-view': view === '3d' && ctx ? '3d' : '2d' },
         h('div', { className: view === '3d' && ctx ? 'tk-frame tk-frame-3d' : 'tk-frame' },
           view === '3d' && ctx ? h(Stage3D, { ctx, campaign, onFail: onGlFail }) : h(Board, { creatures, activeKey, floats, uid })),
         h('aside', { className: 'tk-side' },

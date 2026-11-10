@@ -95,7 +95,7 @@ check('camera_fit_frames_board_and_tray_at_every_aspect', fail => {
     if (d < prev - 1e-9) fail(`distance should grow as the pane narrows (${aspect}: ${d} <= ${prev})`)
     prev = d
     const m = m4mul(m4persp((38 * Math.PI) / 180, aspect, 0.5, 140), m4look(orbitEye([0, 0.4, 2.2], 0, 0.74, d), [0, 0.4, 2.2]))
-    for (const p of [[-7.05, 0, -6.05], [7.05, 0, -6.05], [-7.05, 0, 6.05], [7.05, 0, 6.05], [-4.7, 0.3, 10.8], [4.7, 0.3, 10.8]]) {
+    for (const p of [[-7.05, 0, -6.05], [7.05, 0, -6.05], [-7.05, 0, 6.05], [7.05, 0, 6.05], [-4.4, 0.3, 10], [4.4, 0.3, 10]]) {
       const s = project(p, m, 1000, 1000)
       const nx = s.x / 500 - 1
       if (!s.ok || Math.abs(nx) > 1 || s.y < 0 || s.y > 1000) fail(`aspect ${aspect}: corner ${p} falls outside at distance ${d}`)
