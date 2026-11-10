@@ -1146,6 +1146,12 @@ export const SWAY_AZ = 0.3
 /** Idle drift swings the framed squares past the home framing; pull back in proportion to the swing. */
 export const swayDistance = (base, dAz) => base * (1 + 0.5 * Math.abs(dAz))
 const FELT = [6.5, 5.5]
+/** Lens shift that leans the whole composition toward the lower left, away from the dice window in the top-right corner. */
+export function homeProj(aspect) {
+  const m = m4persp(FOV, aspect, 0.5, 140)
+  m[8] = 0.14; m[9] = 0.07
+  return m
+}
 const HEAD = 0.16 + 1.8 * 1.4
 const fitMemo = new Map()
 /** The home shot: the occupied squares plus one ring of empty ones, at the low angle, as close as the pane allows. An empty table frames the whole felt. */
@@ -1163,10 +1169,17 @@ export function homeFrame(cells, aspect, el = HOME_EL) {
   const pts = [[x0, 0.2, z0], [x1, 0.2, z0], [x0, 0.2, z1], [x1, 0.2, z1]]
   for (const c of live) pts.push([c[0], HEAD, c[1]])
   if (!live.length) pts.push([x0, HEAD, z0], [x1, HEAD, z0])
-  const proj = m4persp(FOV, aspect, 0.5, 140)
+  const proj = homeProj(aspect)
+  const ins = insetRect(1000 * aspect, 1000, 0)
+  const clear = [(2 * ins.x) / (1000 * aspect) - 1 - 0.03, 1 - (2 * (ins.y + ins.h)) / 1000 - 0.03]
   const inside = d => {
     const m = m4mul(proj, m4look(orbitEye(target, 0, el, d), target))
-    return pts.every(p => { const c = m4xf(m, p); return c[3] > 0 && Math.abs(c[0] / c[3]) <= 0.9 && Math.abs(c[1] / c[3]) <= 0.86 })
+    return pts.every(p => {
+      const c = m4xf(m, p)
+      if (!(c[3] > 0)) return false
+      const nx = c[0] / c[3], ny = c[1] / c[3]
+      return Math.abs(nx) <= 0.92 && Math.abs(ny) <= 0.88 && !(nx > clear[0] && ny > clear[1])
+    })
   }
   let lo = 3, hi = 120
   for (let k = 0; k < 22; k++) { const mid = (lo + hi) / 2; if (inside(mid)) hi = mid; else lo = mid }
@@ -1179,8 +1192,8 @@ export function homeFrame(cells, aspect, el = HOME_EL) {
 /** The corner inset that shows the dice tray close up, in canvas CSS pixels; k eases 0 (resting) to 1 (a die is in the air). */
 export function insetRect(w, h, k) {
   const m = 14
-  const rest = clamp(w * 0.3, 150, 460)
-  const big = Math.min(rest * 1.65, w * 0.5)
+  const rest = clamp(w * 0.3, 150, 640)
+  const big = Math.min(rest * 1.35, w * 0.38)
   const iw = Math.min(rest + (big - rest) * clamp(k, 0, 1), w - 2 * m), ih = iw * 0.72
   return { x: w - m - iw, y: m, w: iw, h: Math.min(ih, h - 2 * m) }
 }
@@ -1640,7 +1653,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const target = [cam.cur.tx, cam.cur.ty, cam.cur.tz]
     eyePos = orbitEye(target, az, el, dist)
     view = m4look(eyePos, target)
-    vp = m4mul(m4persp(FOV, cam.aspect, 0.5, 140), view)
+    vp = m4mul(homeProj(cam.aspect), view)
     hint.style.opacity = S.time - cam.lastInput > 8 && cam.lastInput > -50 ? '0' : S.time < 14 ? '1' : '0'
   }
 
@@ -1691,7 +1704,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       const flashK = m.flash ? clamp(1 - (S.time - m.flash.t) / 0.7, 0, 1) : 0
       const col = m.tone ? toneOf(m.tone) : toneOf('red')
       const dead = m.v.state === 'dead'
-      drawSurf(m.geo, m.model, { team: col, flash: flashK > 0 ? [m.flash.tint[0], m.flash.tint[1], m.flash.tint[2], flashK * m.flash.strength] : D0.flash, rim: dead ? 0.3 : 1.15, desat: dead ? 0.92 : m.v.state === 'down' ? 0.45 : 0, glow: m.key === S.active ? [0.03, 0.03, 0.05] : D0.glow })
+      drawSurf(m.geo, m.model, { team: col, flash: flashK > 0 ? [m.flash.tint[0], m.flash.tint[1], m.flash.tint[2], flashK * m.flash.strength] : D0.flash, rim: dead ? 0.3 : 0.95, desat: dead ? 0.92 : m.v.state === 'down' ? 0.45 : 0, glow: m.key === S.active ? [0.03, 0.03, 0.05] : D0.glow })
       // condition gems, concentration halo, death-save pips
       const c = m.c, top = BOARD_Y + (m.geo.top || 1.2) * MINI_SCALE_UP + 0.3
       c.conditions.slice(0, 4).forEach((cond, k, all) => {
@@ -1788,7 +1801,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       const a = toneOf('accent')
       drawDecal(flat(act.ground[0], BOARD_Y + 0.01, act.ground[1], footR(act.geo) * 1.9), 2, a, 0.9)
       beamP.use(); beamP.m('uVP', vp); beamP.m('uModel', m4trs([act.ground[0], BOARD_Y, act.ground[1]], [0, 0, 0, 1], [footR(act.geo) / 0.43, 1, footR(act.geo) / 0.43])); beamP.m('uLVP', lvp)
-      beamP.v3('uCam', eyePos); beamP.v3('uGlow', a); beamP.f('uA', 0.5 + 0.1 * Math.sin(S.time * 2.4))
+      beamP.v3('uCam', eyePos); beamP.v3('uGlow', a); beamP.f('uA', 0.27 + 0.06 * Math.sin(S.time * 2.4))
       bindGeo(beamG); gl.drawElements(gl.TRIANGLES, beamG.n, gl.UNSIGNED_SHORT, 0)
       decal.use()
     }

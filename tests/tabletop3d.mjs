@@ -1,7 +1,7 @@
 // Pure-math checks for the 3D tabletop. Imports the real plugin.js (React and the SDK shimmed) and prints
 // { check: [failures] }. Nothing here touches a DOM or a GL context.
 import {
-  DIE_SIDES, MINI_LOOKS, box, buildMini, combine, cone, cyl, diceOf, diceShape, dieMesh, faceUpQuat, homeFrame, HOME_EL, insetRect, insetView, MINI_SCALE_UP, MINI_XZ, SWAY_AZ, swayDistance, lathe, lookOf, wantsCinematic,
+  DIE_SIDES, MINI_LOOKS, box, buildMini, combine, cone, cyl, diceOf, diceShape, dieMesh, faceUpQuat, homeFrame, HOME_EL, homeProj, insetRect, insetView, MINI_SCALE_UP, MINI_XZ, SWAY_AZ, swayDistance, lathe, lookOf, wantsCinematic,
   m4look, m4mul, m4persp, orbitEye, project, qrot, seeded, sphere, throwPlan, throwPose, topValue, torus, trayLayout, cellWorld, stagedWorld, xf
 } from './plugin.mjs'
 
@@ -92,7 +92,7 @@ const FOV = (38 * Math.PI) / 180
 const frameOf = (cells, aspect, az = 0) => {
   const f = homeFrame(cells, aspect)
   const eye = orbitEye(f.target, az, HOME_EL, swayDistance(f.dist, az))
-  return { f, vp: m4mul(m4persp(FOV, aspect, 0.5, 140), m4look(eye, f.target)) }
+  return { f, vp: m4mul(homeProj(aspect), m4look(eye, f.target)) }
 }
 const inFrame = (p, vp) => { const s = project(p, vp, 1000, 1000); return s.ok && Math.abs(s.x / 500 - 1) <= 1 && s.y >= 0 && s.y <= 1000 }
 
@@ -121,6 +121,18 @@ check('home_camera_never_loses_a_creature_even_when_they_spread_over_the_board',
   }
   const empty = frameOf([], 1.6).vp
   for (const p of [[-6.5, 0.2, -5.5], [6.5, 0.2, -5.5], [-6.5, 0.2, 5.5], [6.5, 0.2, 5.5]]) if (!inFrame(p, empty)) fail(`an empty table should frame the whole felt, ${p} is outside`)
+})
+
+check('home_camera_keeps_the_occupied_squares_clear_of_the_dice_window', fail => {
+  const clusters = [[cellWorld(6, 5), cellWorld(7, 4), cellWorld(7, 5), cellWorld(7, 6)], [cellWorld(1, 1), cellWorld(9, 8)], [cellWorld(5, 5)], [cellWorld(10, 1), cellWorld(1, 8)], [cellWorld(9, 0), cellWorld(8, 1)]]
+  for (const aspect of [1.78, 1.45]) for (const cells of clusters) {
+    const { vp } = frameOf(cells, aspect)
+    const W = 1000 * aspect, r = insetRect(W, 1000, 0)
+    for (const c of cells) for (const y of [0.16, 0.16 + 1.8 * 1.35]) {
+      const s = project([c[0], y, c[1]], vp, W, 1000)
+      if (s.ok && s.x >= r.x && s.x <= r.x + r.w && s.y >= r.y && s.y <= r.y + r.h) fail(`aspect ${aspect}: a creature at ${c} sits under the dice window`)
+    }
+  }
 })
 
 check('home_camera_sits_lower_than_the_old_three_quarter_view', fail => {
@@ -158,8 +170,8 @@ check('dice_inset_sits_top_right_and_grows_during_a_throw', fail => {
       if (r.x + r.w < w - 24 || r.y > 24) fail(`${w}x${h} ${name}: inset is not tucked into the top-right corner`)
     }
     if (a.w * a.h > w * h * 0.13) fail(`${w}x${h}: the resting inset covers too much of the table`)
-    if (w >= 800 && !(b.w >= a.w * 1.4)) fail(`${w}x${h}: the throw inset should grow by at least 1.4x`)
-    if (b.w * b.h > w * h * 0.4) fail(`${w}x${h}: the throw inset swallows the table`)
+    if (w >= 800 && !(b.w >= a.w * 1.25)) fail(`${w}x${h}: the throw inset should grow by at least 1.25x`)
+    if (b.w * b.h > w * h * 0.27) fail(`${w}x${h}: the throw inset swallows the table`)
   }
 })
 

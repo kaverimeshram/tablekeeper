@@ -41,7 +41,7 @@ class TabletopMathTests(unittest.TestCase):
         cls.results = run_checks(cls.source)
 
     def test_every_check_ran(self):
-        self.assertEqual(len(self.results), 18)
+        self.assertEqual(len(self.results), 19)
 
     def test_checks_pass(self):
         for name, failures in self.results.items():
