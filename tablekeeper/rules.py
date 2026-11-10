@@ -12,7 +12,7 @@ def roll(formula: str, *, rng=None) -> dict:
     if not match or not (match.group(1) or match.group(3)):
         raise ValueError("Use a dice formula such as 1d20+3")
     count, sides, mod = int(match.group(1) or 0), int(match.group(2) or 0), int(match.group(3) or 0)
-    if count > 100 or sides > 1000 or sides < 0:
+    if (count == 0 and mod == 0) or count > 100 or sides > 1000 or sides < 0:
         raise ValueError("Dice formula exceeds limits")
     dice = [rng.randint(1, sides) for _ in range(count)] if count else []
     return {"formula": formula, "dice": dice, "modifier": mod, "total": sum(dice) + mod}
