@@ -120,6 +120,18 @@ const STYLE = `
 .tk-inset{position:absolute;left:0;top:0;border:1px solid color-mix(in srgb,var(--ui-accent) 38%,var(--ui-stroke-secondary));border-radius:4px;box-shadow:0 12px 34px -12px color-mix(in srgb,var(--ui-base) 80%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--ui-base) 10%,transparent);pointer-events:none}
 .tk-inset-l{position:absolute;left:8px;top:6px;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--ui-text-secondary);text-shadow:0 1px 6px var(--ui-bg-editor)}
 .tk-hint{position:absolute;left:50%;transform:translateX(-50%);bottom:10px;white-space:nowrap;font-size:10.5px;letter-spacing:.05em;color:var(--ui-text-tertiary);transition:opacity .8s}
+.tk-cine{position:fixed;inset:0;z-index:2147483000;height:auto;overflow:hidden;background:var(--ui-bg-editor)}
+.tk-cine .tk-view3d{position:absolute;inset:0;width:auto;aspect-ratio:auto;min-height:0;max-height:none}
+.tk-cine .tk-hint{display:none}
+.tk-cine .tk-cap{left:50%;top:auto;bottom:38px;transform:translateX(-50%);padding:10px 26px;border-radius:16px;gap:16px}
+.tk-cine .tk-cap-who{font-size:16px}.tk-cine .tk-cap-val{font-size:42px}.tk-cine .tk-cap-tag{font-size:13px}
+.tk-cine-hud{position:absolute;left:34px;top:28px;display:flex;flex-direction:column;gap:8px;pointer-events:none;text-shadow:0 2px 18px var(--ui-bg-editor),0 0 3px var(--ui-bg-editor)}
+.tk-cine-scene{font-size:30px;font-weight:700;letter-spacing:-.015em;line-height:1.1;max-width:60ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk-cine-turn{display:flex;align-items:center;gap:12px;font-size:19px;color:var(--ui-text-secondary)}
+.tk-cine-turn b{color:var(--ui-text-primary);font-weight:650}
+.tk-cine-turn .tk-round{font-size:14px;padding:4px 12px}
+.tk-cine-x{position:absolute;right:16px;bottom:14px;background:color-mix(in srgb,var(--ui-bg-editor) 70%,transparent);color:var(--ui-text-secondary);border:1px solid var(--ui-stroke-secondary);border-radius:7px;padding:4px 10px;font:inherit;font-size:11px;letter-spacing:.1em;cursor:pointer;opacity:.3;transition:opacity .2s}
+.tk-cine-x:hover,.tk-cine-x:focus-visible{opacity:1}
 @keyframes tk-live{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ui-green) 55%,transparent)}70%,100%{box-shadow:0 0 0 7px transparent}}
 @keyframes tk-pulse{0%,100%{opacity:.95;transform:scale(1)}50%{opacity:.3;transform:scale(1.16)}}
 @keyframes tk-float{0%{opacity:0;transform:translateY(0)}12%{opacity:1}100%{opacity:0;transform:translateY(-34px)}}
@@ -2209,11 +2221,13 @@ function Tabletop({ ctx }) {
   const [gl, setGl] = useState(() => canWebGL())
   const model = buildModel(data.campaign)
   const { floats, fresh } = useStage(ctx, data.campaign?.chat, model.creatures, model.rolls)
+  const [cinematic, setCinematic] = useState(() => wantsCinematic(window.location.search, window.location.hash))
   const setView = next => { ctx.storage.set('view', next); setViewState(next) }
-  return h(TabletopView, { data, model, floats, fresh, uid, ctx, view: gl ? view : '2d', setView, gl, onGlFail: () => setGl(false) })
+  useEffect(() => (cinematic ? ctx.addEventListener(document, 'keydown', e => { if (e.key === 'Escape') setCinematic(false) }) : undefined), [cinematic])
+  return h(TabletopView, { data, model, floats, fresh, uid, ctx, view: gl ? view : '2d', setView, gl, onGlFail: () => setGl(false), cinematic, setCinematic })
 }
 
-export function TabletopView({ data, model, floats, fresh, uid, ctx, view = '2d', setView, gl = false, onGlFail }) {
+export function TabletopView({ data, model, floats, fresh, uid, ctx, view = '2d', setView, gl = false, onGlFail, cinematic = false, setCinematic }) {
   const { status, campaign, campaigns, error, chat, pick } = data
   const { creatures, rolls, combat, activeKey, active, shown } = model
   const recent = rolls.slice(-10).reverse()
@@ -2226,6 +2240,17 @@ export function TabletopView({ data, model, floats, fresh, uid, ctx, view = '2d'
         status === 'loading' ? h('div', null, 'Setting the table\u2026')
           : status === 'error' ? h('div', null, h('b', null, 'Campaign data is unavailable'), error)
           : h('div', null, h('b', null, 'The table is empty'), 'Start a campaign with /table new in any chat. Characters, monsters and every roll appear here as they happen.')))
+  }
+
+  if (cinematic && view === '3d' && ctx) {
+    return h('div', { className: 'tk tk-cine' }, h('style', null, STYLE),
+      h(Stage3D, { ctx, campaign, onFail: onGlFail }),
+      h('div', { className: 'tk-cine-hud' },
+        h('div', { className: 'tk-cine-scene' }, clip(campaign.scene, 120) || 'Untitled scene'),
+        h('div', { className: 'tk-cine-turn' },
+          combat ? h('span', { className: 'tk-round tk-num' }, `Round ${num(campaign.round)}`) : h('span', { className: 'tk-chip' }, 'Exploration'),
+          active && h('span', null, h('b', null, active.name), "'s turn"))),
+      setCinematic && h('button', { type: 'button', className: 'tk-cine-x', 'aria-label': 'Exit cinematic view', onClick: () => setCinematic(false) }, 'ESC'))
   }
 
   return h('div', { className: 'tk' }, h('style', null, STYLE),
@@ -2242,6 +2267,7 @@ export function TabletopView({ data, model, floats, fresh, uid, ctx, view = '2d'
             campaigns.map(c => h('option', { key: c.chat, value: c.chat }, clip(c.scene, 28) || clip(c.chat, 28)))),
           setView && h('div', { className: 'tk-seg', role: 'group', 'aria-label': 'Board view' },
             ['3d', '2d'].map(v => h('button', { key: v, type: 'button', className: 'tk-segb', 'aria-pressed': view === v, disabled: v === '3d' && !gl, title: v === '3d' && !gl ? 'WebGL is unavailable here' : `${v.toUpperCase()} board`, onClick: () => setView(v) }, v.toUpperCase()))),
+          setCinematic && h('div', { className: 'tk-seg' }, h('button', { type: 'button', className: 'tk-segb', 'aria-label': 'Cinematic view', disabled: view !== '3d' || !gl, title: 'Full-bleed view for recording', onClick: () => setCinematic(true) }, 'CINE')),
           h('span', { className: 'tk-chip', title: ok ? 'Updating every second' : error }, h('i', { className: 'tk-live', 'data-ok': ok }), ok ? 'Live' : 'Reconnecting'))),
       h('div', { className: 'tk-layout', 'data-view': view === '3d' && ctx ? '3d' : '2d' },
         h('div', { className: view === '3d' && ctx ? 'tk-frame tk-frame-3d' : 'tk-frame' },

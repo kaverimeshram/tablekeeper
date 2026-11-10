@@ -179,11 +179,15 @@ const campaign = {
 const data = { status: 'live', campaign, campaigns: [{ chat: hostile.text, scene: hostile.attr }, { chat: 'b', scene: 'b' }], error: '', chat: hostile.text, pick: () => {} }
 const out = { tags: new Set(), attrs: [], texts: [] }
 expand(TabletopView({ data, model: buildModel(campaign), floats: [{ id: 'f', key: 'a', delta: -3 }], fresh: new Set([1]), uid: 'u' }), out)
+const cine = { tags: new Set(), attrs: [], texts: [] }
+expand(TabletopView({ data, model: buildModel(campaign), floats: [], fresh: new Set(), uid: 'u', ctx: {}, view: '3d', gl: true, cinematic: true, setCinematic: () => {}, setView: () => {} }), cine)
+const toggle = { tags: new Set(), attrs: [], texts: [] }
+expand(TabletopView({ data, model: buildModel(campaign), floats: [], fresh: new Set(), uid: 'u', ctx: {}, view: '3d', gl: true, cinematic: false, setCinematic: () => {}, setView: () => {} }), toggle)
 const registered = []
 plugin.register({ registerMany: cs => registered.push(...cs), onDispose: () => {} })
 const longName = creatureView({ id: 'x', name: 'n'.repeat(500), hp: 4, max_hp: 4, pos: [50, 50], death_saves: { f: 3 } }, 0)
 const roll = rollView({ formula: 'f'.repeat(500), dice: Array(200).fill(3), total: 'NaN' })
-console.log(JSON.stringify({ tags: [...out.tags], attrs: out.attrs, texts: out.texts, registered: registered.map(c => [c.id, c.area, c.data || null]), longName, roll }))
+console.log(JSON.stringify({ cine: { tags: [...cine.tags], attrs: cine.attrs, texts: cine.texts }, toggle: { attrs: toggle.attrs }, tags: [...out.tags], attrs: out.attrs, texts: out.texts, registered: registered.map(c => [c.id, c.area, c.data || null]), longName, roll }))
 """
 
 
@@ -237,6 +241,21 @@ class PaneRenderTests(unittest.TestCase):
         self.assertIsNone(re.search(r"#[0-9a-fA-F]{3,8}\b", self.source))
         self.assertIsNone(re.search(r"\brgba?\(|\bhsla?\(", self.source))
         self.assertIsNone(re.search(r"\bfill: '(?:black|white|red|green|blue)'", self.source))
+
+    def test_cinematic_view_is_full_bleed_with_only_the_hud(self):
+        cine = self.out["cine"]
+        self.assertNotIn("aside", cine["tags"])
+        labels = {v for tag, key, v in cine["attrs"] if key == "aria-label"}
+        self.assertFalse({"Initiative order", "Dice tray", "Combat log", "Board view"} & labels)
+        self.assertIn("Exit cinematic view", labels)
+        self.assertTrue(any(v.startswith("tk tk-cine") or v == "tk-cine" or "tk-cine" in v.split() for t, k, v in cine["attrs"] if k == "className"))
+        self.assertIn("Round 2", cine["texts"])
+        self.assertTrue(any(HOSTILE in t for t in cine["texts"]), "whose turn it is stays on screen, as text")
+        self.assertTrue(any(HOSTILE in t for t in cine["texts"]))
+
+    def test_the_normal_header_offers_the_cinematic_switch(self):
+        labels = {v for tag, key, v in self.out["toggle"]["attrs"] if key == "aria-label"}
+        self.assertIn("Cinematic view", labels)
 
     def test_registers_pane_page_and_nav(self):
         by_id = {c[0]: c for c in self.out["registered"]}
