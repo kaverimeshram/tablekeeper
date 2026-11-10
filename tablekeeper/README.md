@@ -40,7 +40,7 @@ Played live in the Hermes CLI with `nvidia/nemotron-3-ultra-550b-a55b:free` thro
 | `tk_check`, `tk_save` | character owner | Ability or skill check, saving throw. |
 | `tk_attack` | owner, on their turn | To-hit against AC, cover, damage, range and reach. |
 | `tk_cast` | owner, on their turn | Slots, attacks, saves, upcasting, concentration. |
-| `tk_move` | owner, on their turn | Speed limited movement, opportunity attacks, disengage. |
+| `tk_move` | owner, on their turn | Speed limited movement to a square or toward a creature, opportunity attacks, disengage. |
 | `tk_death_save` | owner, on their turn | Death saving throw; ends the turn. |
 | `tk_next_turn` | owner of the active character | Ends the turn and plays the monsters. |
 | `tk_rest` | owner (short), game master (long) | Hit dice, full recovery. Outside combat. |
