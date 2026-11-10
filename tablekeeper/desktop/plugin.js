@@ -117,7 +117,9 @@ const STYLE = `
 .tk-cap[data-tone="crit"] .tk-cap-val,.tk-cap[data-tone="crit"] .tk-cap-tag{color:var(--ui-yellow)}
 .tk-cap[data-tone="fumble"] .tk-cap-val,.tk-cap[data-tone="fumble"] .tk-cap-tag,.tk-cap[data-tone="miss"] .tk-cap-tag{color:var(--ui-red)}
 .tk-cap[data-tone="hit"] .tk-cap-tag{color:var(--ui-green)}
-.tk-hint{position:absolute;right:12px;top:10px;font-size:10.5px;letter-spacing:.05em;color:var(--ui-text-tertiary);transition:opacity .8s}
+.tk-inset{position:absolute;left:0;top:0;border:1px solid color-mix(in srgb,var(--ui-accent) 38%,var(--ui-stroke-secondary));border-radius:4px;box-shadow:0 12px 34px -12px color-mix(in srgb,var(--ui-base) 80%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--ui-base) 10%,transparent);pointer-events:none}
+.tk-inset-l{position:absolute;left:8px;top:6px;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:var(--ui-text-secondary);text-shadow:0 1px 6px var(--ui-bg-editor)}
+.tk-hint{position:absolute;left:50%;transform:translateX(-50%);bottom:10px;white-space:nowrap;font-size:10.5px;letter-spacing:.05em;color:var(--ui-text-tertiary);transition:opacity .8s}
 @keyframes tk-live{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ui-green) 55%,transparent)}70%,100%{box-shadow:0 0 0 7px transparent}}
 @keyframes tk-pulse{0%,100%{opacity:.95;transform:scale(1)}50%{opacity:.3;transform:scale(1.16)}}
 @keyframes tk-float{0%{opacity:0;transform:translateY(0)}12%{opacity:1}100%{opacity:0;transform:translateY(-34px)}}
@@ -1172,8 +1174,8 @@ export function insetRect(w, h, k) {
 }
 /** Fixed camera for the inset: high enough to read the faces, wide enough for the flight in from the near-right edge. */
 export function insetView(aspect) {
-  const target = [TRAY.x + 0.6, TRAY.floor, TRAY.z + 0.2]
-  return { target, eye: orbitEye(target, 0.35, 1.05, 8.2 / Math.min(1, aspect / (4 / 3))), fov: FOV }
+  const target = [TRAY.x, TRAY.floor + 0.25, TRAY.z]
+  return { target, eye: orbitEye(target, 0.25, 1.12, 6.4 / Math.min(1, aspect / (4 / 3))), fov: FOV }
 }
 
 /** `?cinematic=1` in the address, or `cinematic=1` after the hash route, starts the full-bleed recording view. */
@@ -1375,7 +1377,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   // ---------------------------------------------------------------- scene state
   const S = {
     time: 0, minis: new Map(), chat: undefined, seq: -1, queue: [], actions: [], dice: [], nextAt: 0, floats: [], shots: [], active: '', combat: false,
-    caption: null, hover: '', tray: null, frames: 0, fpsAt: 0, fps: 0, cpu: 0
+    caption: null, hover: '', tray: null, insetK: 0, insetHold: 0, frames: 0, fpsAt: 0, fps: 0, cpu: 0
   }
   const cam = { az: HOME.az, el: HOME.el, zoom: HOME.zoom, home: homeFrame([], 1.6), cells: [], cur: { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, ty: 0.6, tz: 0, dist: 0 }, lastInput: -100, aspect: 1.6 }
   cam.cur.tx = cam.home.target[0]; cam.cur.ty = cam.home.target[1]; cam.cur.tz = cam.home.target[2]; cam.cur.dist = cam.home.dist
@@ -1396,7 +1398,10 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   const capWho = makeEl('span', 'tk-cap-who'), capVal = makeEl('b', 'tk-cap-val'), capTag = makeEl('span', 'tk-cap-tag')
   cap.append(capWho, capVal, capTag)
   const hint = makeEl('div', 'tk-hint', 'Drag to orbit. Scroll to zoom. Double-click to reset.')
-  hud.append(plate, tip, cap, hint)
+  const insetBox = makeEl('div', 'tk-inset')
+  insetBox.append(makeEl('span', 'tk-inset-l', 'Dice tray'))
+  insetBox.style.display = 'none'
+  hud.append(plate, tip, cap, hint, insetBox)
 
   const worldOf = (c, staged) => (c.pos ? cellWorld(c.pos[0], c.pos[1]) : stagedWorld(staged.indexOf(c)))
   const toneOf = name => theme[name] || TONE_FALLBACK[name] || [1, 1, 1]
@@ -1457,6 +1462,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     })
     S.dice.push(...made)
     S.tray = { roll, made, landAt: S.time + last, crit, fumble, shown: false }
+    if (!resting) S.insetHold = S.time + last + 1.9
     if (resting) land(S.tray)
     return last
   }
@@ -1600,6 +1606,8 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     if (S.queue.length && S.time >= S.nextAt) runEvent(S.queue.shift())
     for (const m of S.minis.values()) stepMini(m, dt)
     S.dice = S.dice.filter(d => !d.leave || S.time - d.leave < 0.35)
+    const aim = S.time < S.insetHold ? 1 : 0
+    S.insetK += (aim - S.insetK) * (1 - Math.exp(-dt * (aim ? 6 : 1.8)))
     S.shots = S.shots.filter(s => S.time - s.at < s.dur)
     for (let k = S.floats.length - 1; k >= 0; k--) if (S.time - S.floats[k].born > 1.7) { S.floats[k].el.remove(); S.floats.splice(k, 1) }
   }
@@ -1658,37 +1666,16 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   }
   const flameSize = k => 0.55 + 0.1 * Math.sin(S.time * 13 + k * 2) + 0.05 * Math.sin(S.time * 31 + k)
 
-  function render() {
-    const w = canvas.width, h = canvas.height
-    const bg = toneOf('bg-editor')
-    const candle = CANDLES.map((c, k) => [c[0], 1.55, c[1], 3.2 * (0.85 + 0.08 * Math.sin(S.time * 11 + k * 3) + 0.06 * Math.sin(S.time * 23 + k))])
-    pl0 = candle[0]; pl1 = candle[1]
-    const castDraw = () => {
-      for (const s of statics) if (s.cast) drawDepth(s.g, s.model)
-      for (const m of S.minis.values()) drawDepth(m.geo, m.model)
-      for (const d of S.dice) { const mm = dieModel(d); if (mm) drawDepth(d.g, mm) }
-    }
-    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(true); gl.disable(gl.BLEND)
-    if (shadowOK) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo)
-      gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE)
-      gl.clearColor(1, 1, 1, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-      depthP.use(); depthP.m('uLVP', lvp)
-      gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT)
-      castDraw()
-      gl.disable(gl.CULL_FACE)
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-    }
-    gl.viewport(0, 0, w, h)
-    gl.clearColor(bg[0], bg[1], bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+  /** Everything lit and shaded: the table, the miniatures (not in the inset), the dice. */
+  const surfPass = (vpM, eye, bg, withMinis) => {
     surf.use()
-    surf.m('uVP', vp); surf.m('uLVP', lvp); surf.v3('uCam', eyePos); surf.v3('uSun', SUN)
+    surf.m('uVP', vpM); surf.m('uLVP', lvp); surf.v3('uCam', eye); surf.v3('uSun', SUN)
     surf.v3('uSunCol', [1.85, 1.38, 0.9]); surf.v3('uSky', [0.26, 0.32, 0.5]); surf.v3('uGround', [0.16, 0.11, 0.08]); surf.v3('uFog', bg); surf.f('uFogD', 0.021)
     surf.v4('uPL0', pl0); surf.v4('uPL1', pl1); surf.v3('uPLCol', [1.0, 0.62, 0.3]); surf.v2('uTexel', [1 / SHADOW_SIZE, 1 / SHADOW_SIZE]); surf.f('uShadowOn', shadowOK ? 1 : 0)
     surf.i('uTex', 0); surf.i('uShadow', 1)
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shadowTex); gl.activeTexture(gl.TEXTURE0)
     for (const s of statics) drawSurf(s.g, s.model, { tex: s.tex, mode: s.mode, spec: s.spec, shine: s.shine })
-    for (const m of S.minis.values()) {
+    if (withMinis) for (const m of S.minis.values()) {
       const flashK = m.flash ? clamp(1 - (S.time - m.flash.t) / 0.7, 0, 1) : 0
       const col = m.tone ? toneOf(m.tone) : toneOf('red')
       const dead = m.v.state === 'dead'
@@ -1715,12 +1702,58 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       const glow = landed && d.crit ? [0.1 + 0.07 * pulse, 0.07 + 0.04 * pulse, 0.005] : landed && d.fumble ? [0.1 + 0.05 * pulse, 0.003, 0.003] : D0.glow
       drawSurf(d.g, mm, { tex: d.tex, mode: 2, body: d.palette.body, ink: d.palette.ink, desat: d.dropped ? 0.7 : 0, glow, spec: 0.3, shine: 60 })
     }
-    for (const s of S.shots) {
+    if (withMinis) for (const s of S.shots) {
       const u = clamp((S.time - s.at) / s.dur, 0, 1)
       const x = mix(s.from[0], s.to[0], u), z = mix(s.from[1], s.to[1], u), y = BOARD_Y + 0.7 + Math.sin(u * Math.PI) * 0.5
       drawSurf(ballG, m4trs([x, y, z], [0, 0, 0, 1], [0.2, 0.2, 0.2]), { team: s.tint })
     }
 
+  }
+
+  /** The dice tray close up in a corner window, so the rolled face reads on video. Same scene, second camera, scissored. */
+  function drawInset(bg) {
+    const r = insetRect(size[0], size[1], S.insetK)
+    const w = Math.round(r.w * dpr), hh = Math.round(r.h * dpr), x = Math.round(r.x * dpr), y = canvas.height - Math.round(r.y * dpr) - hh
+    const iv = insetView(w / hh)
+    const ivp = m4mul(m4persp(iv.fov, w / hh, 0.3, 80), m4look(iv.eye, iv.target))
+    gl.enable(gl.SCISSOR_TEST); gl.scissor(x, y, w, hh); gl.viewport(x, y, w, hh)
+    gl.clearColor(bg[0], bg[1], bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+    gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND)
+    surfPass(ivp, iv.eye, bg, false)
+    gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE)
+    decal.use(); decal.m('uVP', ivp); decal.f('uTime', S.time)
+    for (const d of S.dice) if (d.pose && d.pose.done && (d.crit || d.fumble)) {
+      const pulse = 0.5 + 0.5 * Math.sin(S.time * 4)
+      drawDecal(flat(d.plan.target[0], TRAY.floor + 0.01, d.plan.target[1], 1.8 + pulse * 0.2), 3, d.crit ? [1, 0.78, 0.2] : [1, 0.15, 0.1], 0.85)
+    }
+    gl.disable(gl.BLEND); gl.depthMask(true); gl.disable(gl.SCISSOR_TEST)
+    gl.viewport(0, 0, canvas.width, canvas.height)
+  }
+
+  function render() {
+    const w = canvas.width, h = canvas.height
+    const bg = toneOf('bg-editor')
+    const candle = CANDLES.map((c, k) => [c[0], 1.55, c[1], 3.2 * (0.85 + 0.08 * Math.sin(S.time * 11 + k * 3) + 0.06 * Math.sin(S.time * 23 + k))])
+    pl0 = candle[0]; pl1 = candle[1]
+    const castDraw = () => {
+      for (const s of statics) if (s.cast) drawDepth(s.g, s.model)
+      for (const m of S.minis.values()) drawDepth(m.geo, m.model)
+      for (const d of S.dice) { const mm = dieModel(d); if (mm) drawDepth(d.g, mm) }
+    }
+    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(true); gl.disable(gl.BLEND)
+    if (shadowOK) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo)
+      gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE)
+      gl.clearColor(1, 1, 1, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+      depthP.use(); depthP.m('uLVP', lvp)
+      gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT)
+      castDraw()
+      gl.disable(gl.CULL_FACE)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    }
+    gl.viewport(0, 0, w, h)
+    gl.clearColor(bg[0], bg[1], bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+    surfPass(vp, eyePos, bg, true)
     // ground decals: contact shadow, hit-point ring, active glow
     gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     decal.use(); decal.m('uVP', vp); decal.f('uTime', S.time)
@@ -1760,6 +1793,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     bindGeo(quad); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0)
     gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true)
+    if (S.dice.length) drawInset(bg)
   }
 
   // ---------------------------------------------------------------- overlays: name plates and damage numbers ride the projection
@@ -1783,6 +1817,12 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       tip.style.display = p.ok ? '' : 'none'
       tip.style.transform = `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) translate(-50%, -100%)`
     } else tip.style.display = 'none'
+    if (S.dice.length) {
+      const r = insetRect(w, h, S.insetK)
+      insetBox.style.display = ''
+      insetBox.style.transform = `translate(${r.x.toFixed(1)}px, ${r.y.toFixed(1)}px)`
+      insetBox.style.width = `${r.w.toFixed(1)}px`; insetBox.style.height = `${r.h.toFixed(1)}px`
+    } else insetBox.style.display = 'none'
     for (const f of S.floats) {
       const m = S.minis.get(f.key)
       if (!m) { f.el.style.display = 'none'; continue }
