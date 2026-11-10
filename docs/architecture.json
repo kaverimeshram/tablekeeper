@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Tablekeeper architecture",
+    "output": "architecture.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "players",
+      "type": "external",
+      "label": "Players",
+      "sublabel": "Telegram, Discord, CLI",
+      "pos": [
+        40,
+        310
+      ],
+      "size": [
+        170,
+        70
+      ]
+    },
+    {
+      "id": "gateway",
+      "type": "cloud",
+      "label": "Hermes gateway",
+      "sublabel": "sender id in session context",
+      "pos": [
+        290,
+        310
+      ],
+      "size": [
+        170,
+        70
+      ]
+    },
+    {
+      "id": "model",
+      "type": "external",
+      "label": "Model",
+      "sublabel": "narrates, calls tk_ tools",
+      "pos": [
+        540,
+        310
+      ],
+      "size": [
+        170,
+        70
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "tk_* tools",
+      "sublabel": "17 tools, owner and turn checks",
+      "pos": [
+        790,
+        310
+      ],
+      "size": [
+        170,
+        70
+      ],
+      "tag": "tablekeeper"
+    },
+    {
+      "id": "rules",
+      "type": "backend",
+      "label": "Rules engine",
+      "sublabel": "SRD 5.1, dice via secrets",
+      "pos": [
+        790,
+        130
+      ],
+      "size": [
+        170,
+        70
+      ],
+      "tag": "monster tactics"
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "SQLite store",
+      "sublabel": "per chat, WAL, mode 0600",
+      "pos": [
+        790,
+        490
+      ],
+      "size": [
+        170,
+        70
+      ]
+    },
+    {
+      "id": "hook",
+      "type": "security",
+      "label": "State injection",
+      "sublabel": "pre_llm_call",
+      "pos": [
+        540,
+        490
+      ],
+      "size": [
+        170,
+        70
+      ]
+    },
+    {
+      "id": "guard",
+      "type": "security",
+      "label": "Narration guard",
+      "sublabel": "transform_llm_output",
+      "pos": [
+        290,
+        130
+      ],
+      "size": [
+        170,
+        70
+      ],
+      "tag": "post_tool_call ledger"
+    },
+    {
+      "id": "dashboard",
+      "type": "backend",
+      "label": "Dashboard route",
+      "sublabel": "GET /campaigns, /campaign",
+      "pos": [
+        1040,
+        490
+      ],
+      "size": [
+        170,
+        70
+      ],
+      "tag": "read-only"
+    },
+    {
+      "id": "pane",
+      "type": "frontend",
+      "label": "Desktop Tabletop pane",
+      "sublabel": "plugin.js, polls every second",
+      "pos": [
+        1040,
+        310
+      ],
+      "size": [
+        170,
+        70
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Python owns the table",
+      "wraps": [
+        "rules",
+        "tools",
+        "store"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "players-to-gateway",
+      "from": "players",
+      "to": "gateway",
+      "label": "chat"
+    },
+    {
+      "id": "gateway-to-model",
+      "from": "gateway",
+      "to": "model",
+      "label": "prompt"
+    },
+    {
+      "id": "model-to-tools",
+      "from": "model",
+      "to": "tools",
+      "label": "tk_ calls",
+      "variant": "emphasis",
+      "labelDx": -10
+    },
+    {
+      "id": "tools-to-rules",
+      "from": "tools",
+      "to": "rules",
+      "label": "resolve",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "tools-to-store",
+      "from": "tools",
+      "to": "store",
+      "label": "persist",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 40
+    },
+    {
+      "id": "store-to-hook",
+      "from": "store",
+      "to": "hook",
+      "label": "load",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelDx": -12
+    },
+    {
+      "id": "hook-to-model",
+      "from": "hook",
+      "to": "model",
+      "label": "state block",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "model-to-guard",
+      "from": "model",
+      "to": "guard",
+      "label": "narration",
+      "fromSide": "top",
+      "toSide": "right"
+    },
+    {
+      "id": "guard-to-gateway",
+      "from": "guard",
+      "to": "gateway",
+      "label": "checked reply",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 50
+    },
+    {
+      "id": "store-to-dashboard",
+      "from": "store",
+      "to": "dashboard",
+      "label": "mode=ro",
+      "variant": "dashed",
+      "labelDx": 16
+    },
+    {
+      "id": "dashboard-to-pane",
+      "from": "dashboard",
+      "to": "pane",
+      "label": "JSON",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Authority",
+      "items": [
+        "Dice roll through secrets.SystemRandom",
+        "HP, positions, initiative live in SQLite, not in the prompt"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Identity",
+      "items": [
+        "Sender id comes from the gateway session",
+        "Owner and turn checks run before any tool acts"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Guard",
+      "items": [
+        "Every turn opens with the stored state",
+        "Numbers no tool returned get a visible correction"
+      ]
+    }
+  ]
+}
