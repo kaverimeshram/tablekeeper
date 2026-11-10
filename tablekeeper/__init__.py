@@ -104,12 +104,17 @@ def _by_id(camp: dict) -> dict:
     return {c["id"]: c for c in camp["creatures"]}
 
 
+def _slug(text) -> str:
+    """Lowercase letters and digits only, so 'Goblin 1', 'goblin-1' and 'goblin1' are one reference."""
+    return re.sub(r"[^a-z0-9]", "", str(text or "").lower())
+
+
 def _find(camp: dict, ref, *, kind: str | None = None) -> dict:
-    ref = str(ref or "").strip().lower()
+    ref = _slug(ref)
     pool = [c for c in camp["creatures"] if kind in (None, c["kind"])]
-    hits = [c for c in pool if ref in (c["id"].lower(), c["name"].lower())]
+    hits = [c for c in pool if ref in (_slug(c["id"]), _slug(c["name"]))]
     if not hits and ref:
-        hits = [c for c in pool if c["name"].lower().startswith(ref) or c["id"].lower().startswith(ref)]
+        hits = [c for c in pool if _slug(c["name"]).startswith(ref) or _slug(c["id"]).startswith(ref)]
         hits = [c for c in hits if not _dead(c)] or hits
     if len(hits) != 1:
         names = ", ".join(c["id"] for c in (hits or pool)) or "none yet"
@@ -150,6 +155,16 @@ def _spawn_pos(camp: dict, side: str, want=None) -> list[int]:
             if not _occupied(camp, (x, y)):
                 return [x, y]
     raise Refusal("grid_full", "No free square is left on that side of the grid.")
+
+
+def _nearest_free(camp: dict, anchor) -> list[int]:
+    """The free square closest to anchor (ties go to the lower row, then column)."""
+    _on_grid(*anchor)
+    squares = sorted(((x, y) for x in range(GRID_W) for y in range(GRID_H) if not _occupied(camp, (x, y))),
+                     key=lambda p: (max(abs(p[0] - anchor[0]), abs(p[1] - anchor[1])), p[1], p[0]))
+    if not squares:
+        raise Refusal("grid_full", "No free square is left on the grid.")
+    return list(squares[0])
 
 
 def _hostile(a: dict, b: dict) -> bool:
@@ -217,7 +232,7 @@ def _new_turn() -> dict:
 
 def _brief(c: dict) -> dict:
     keys = ("id", "name", "kind", "owner", "hp", "max_hp", "temp_hp", "ac", "pos", "status", "conditions", "speed")
-    return {k: c[k] for k in keys}
+    return {**{k: c[k] for k in keys}, "status": rules.state(c)}
 
 
 # ---------------------------------------------------------------- attacks and damage
@@ -421,8 +436,19 @@ def _int(args: dict, key: str, default=None, lo=-1000, hi=1000) -> int:
     return number
 
 
+def _default_ref(camp: dict, who: dict, ref):
+    """A blank character reference means the sender's only character."""
+    if str(ref or "").strip():
+        return ref
+    mine = [c["id"] for c in camp["creatures"] if c["kind"] == "pc" and (who["local"] or c["owner"] == who["user"])]
+    if len(mine) != 1:
+        raise Refusal("invalid_input", "character is required: " + (f"choose one of {', '.join(mine)}." if mine else
+                      "the sender has no character yet; claim one with tk_claim_character."))
+    return mine[0]
+
+
 def _owned(camp: dict, who: dict, ref) -> dict:
-    c = _find(camp, ref, kind="pc")
+    c = _find(camp, _default_ref(camp, who, ref), kind="pc")
     if not (who["local"] or c["owner"] == who["user"]):
         raise Refusal("not_owner", f"{c['name']} belongs to another player. Only their owner can act for them.")
     return c
@@ -458,8 +484,9 @@ def _new_campaign(who: dict, scene: str, replace: bool) -> dict:
     if old is not None and (old["creatures"] or old["in_combat"]):
         _need_gm(old, who, "replace this campaign")
         if not replace:
-            raise Refusal("campaign_exists", "A campaign with characters already runs in this chat. "
-                          "Call again with replace=true to wipe it and start over.")
+            raise Refusal("campaign_exists", "A campaign with characters already runs in this chat, so it was left untouched. "
+                          "Keep playing it with tk_state, tk_claim_character and tk_start_combat. Only if the player "
+                          "explicitly asked to wipe it and start over, call again with replace=true.")
     camp = store.create(_db(), who["chat"], who["user"])
     camp["_rolls"], camp["_log"], camp["scene"] = [], [], scene
     _log(camp, "campaign", f"{who['name']} started a campaign." + (f" Scene: {scene}" if scene else ""))
@@ -469,7 +496,9 @@ def _new_campaign(who: dict, scene: str, replace: bool) -> dict:
 
 @_tool
 def tk_new_campaign(args):
-    return _new_campaign(_identity(), _text(args, "scene", required=False, limit=500), bool(args.get("replace")))
+    scene = _text(args, "scene", required=False, limit=500) or _text(args, "description", required=False, limit=500) \
+        or _text(args, "name", required=False, limit=500)
+    return _new_campaign(_identity(), scene, bool(args.get("replace")))
 
 
 def _claim(camp: dict, who: dict, key: str) -> dict:
@@ -539,11 +568,18 @@ def _roll_result(camp: dict, c: dict, kind: str, label: str, res: dict) -> dict:
     return _ok(character=c["id"], **res)
 
 
+def _not_down(c: dict) -> None:
+    if rules.state(c) == "down":
+        raise Refusal("cannot_act", f"{c['name']} is at 0 HP and unconscious. Their roll is a death saving throw: "
+                      "call tk_death_save on their turn; checks and saves do not apply.")
+
+
 @_tool
 def tk_check(args):
     who = _identity()
     camp = _load(who)
     c = _owned(camp, who, args.get("character"))
+    _not_down(c)
     dc = _int(args, "dc", None, 1, 40) if args.get("dc") is not None else None
     res = rules.ability_check(c, _text(args, "skill_or_ability"), dc, advantage=bool(args.get("advantage")),
                               disadvantage=bool(args.get("disadvantage")), rng=RNG)
@@ -557,6 +593,7 @@ def tk_save(args):
     who = _identity()
     camp = _load(who)
     c = _owned(camp, who, args.get("character"))
+    _not_down(c)
     res = rules.saving_throw(c, _text(args, "ability"), _int(args, "dc", None, 1, 40),
                              advantage=bool(args.get("advantage")), disadvantage=bool(args.get("disadvantage")), rng=RNG)
     out = _roll_result(camp, c, "save", f"{res['ability']} save", res)
@@ -593,6 +630,25 @@ def tk_attack(args):
     return _ok(**res, **extra)
 
 
+def _destination(camp: dict, c: dict, args: dict) -> list[int]:
+    """x,y (or a to=[x,y] pair), or the free square within reach of the movement left that is closest to `toward`."""
+    to = args.get("to") or args.get("position")
+    if isinstance(to, (list, tuple)) and len(to) == 2 and "x" not in args:
+        args = {**args, "x": to[0], "y": to[1]}
+    if args.get("toward") and "x" not in args:
+        goal = _find(camp, args["toward"])
+        if goal is c:
+            raise Refusal("invalid_input", f"{c['name']} cannot move toward themselves.")
+        left = _speed_left(c) // (2 * FEET if "prone" in c["conditions"] else FEET)
+        ring = [(x, y) for x in range(GRID_W) for y in range(GRID_H)
+                if max(abs(x - c["pos"][0]), abs(y - c["pos"][1])) <= left and not _occupied(camp, (x, y), c["id"])]
+        if not ring:
+            raise Refusal("too_far", f"{c['name']} has no movement left.", movement_left=_speed_left(c))
+        return list(min(ring, key=lambda p: (max(abs(p[0] - goal["pos"][0]), abs(p[1] - goal["pos"][1])),
+                                             max(abs(p[0] - c["pos"][0]), abs(p[1] - c["pos"][1])), p[1], p[0])))
+    return [_int(args, "x", None, 0, GRID_W - 1), _int(args, "y", None, 0, GRID_H - 1)]
+
+
 @_tool
 def tk_move(args):
     who = _identity()
@@ -601,7 +657,7 @@ def tk_move(args):
     disengage = bool(args.get("disengage")) and camp["in_combat"]
     if disengage and c["turn"]["action"]:
         raise Refusal("action_used", f"{c['name']} already used their action this turn.")
-    mv = _walk(camp, c, [_int(args, "x", None, 0, GRID_W - 1), _int(args, "y", None, 0, GRID_H - 1)])
+    mv = _walk(camp, c, _destination(camp, c, args))
     if disengage:
         c["turn"]["action"] = True
     _log(camp, "move", f"{c['name']} moves to ({mv['to'][0]},{mv['to'][1]}).")
@@ -762,15 +818,13 @@ def _spawn_monsters(camp: dict, specs) -> list[dict]:
         if key not in srd.MONSTERS:
             raise Refusal("unknown_monster", f"Monsters: {', '.join(srd.MONSTERS)}.")
         count = _int(spec, "count", 1, 1, MAX_MONSTERS)
-        if count > 1 and ("x" in spec or "y" in spec):
-            raise Refusal("invalid_input", "x and y place one monster; use count=1 or omit the position.")
         for _ in range(count):
             if len(made) >= MAX_MONSTERS:
                 raise Refusal("too_many", f"At most {MAX_MONSTERS} monsters per fight.")
             n = 1 + sum(1 for c in camp["creatures"] if c["id"].startswith(key + "-"))
-            want = [_int(spec, "x", None, 0, GRID_W - 1), _int(spec, "y", None, 0, GRID_H - 1)] if "x" in spec else None
-            m = srd.new_monster(key, id=f"{key}-{n}", name=f"{srd.MONSTERS[key]['name']} {n}",
-                                pos=_spawn_pos(camp, "monster", want))
+            anchor = [_int(spec, "x", None, 0, GRID_W - 1), _int(spec, "y", None, 0, GRID_H - 1)] if "x" in spec else None
+            pos = _nearest_free(camp, anchor) if anchor and count > 1 else _spawn_pos(camp, "monster", anchor)
+            m = srd.new_monster(key, id=f"{key}-{n}", name=f"{srd.MONSTERS[key]['name']} {n}", pos=pos)
             m.update(status="ok", turn=_new_turn())
             camp["creatures"].append(m)
             made.append(m)
@@ -837,7 +891,7 @@ def tk_next_turn(args):
 def tk_death_save(args):
     who = _identity()
     camp = _load(who)
-    c = _find(camp, args.get("character"), kind="pc")
+    c = _find(camp, _default_ref(camp, who, args.get("character")), kind="pc")
     if not (_is_gm(camp, who) or c["owner"] == who["user"]):
         raise Refusal("not_owner", f"{c['name']} belongs to another player. Only their owner or the game master rolls for them.")
     if camp["in_combat"] and camp["active"] != c["id"]:
@@ -981,7 +1035,13 @@ def _context_text(camp: dict, who: dict) -> str:
         head.append(f"Scene note (untrusted text): {scene}")
     if camp["in_combat"]:
         head.append(f"Round {camp['round']}. Active: {camp['active']}. Order: " + " > ".join(camp["initiative"]))
+    head.append("A campaign is running in this chat: never call tk_new_campaign (it wipes it); use tk_state, tk_claim_character, tk_start_combat.")
     head.append("Sender controls: " + (", ".join(mine) or "no character yet (tk_claim_character)") + ".")
+    for c in pcs:
+        if c["id"] in mine and rules.state(c) == "down":
+            head.append(f"{c['id']} is at 0 HP: their only roll is tk_death_save (not tk_check or tk_save).")
+    if not camp["in_combat"] and not foes:
+        head.append("No foes yet: tk_start_combat spawns monsters (one entry per type with count; x,y optional).")
     text = "\n".join(head + ["Party:"] + [_line(c) for c in pcs] + (["Foes:"] + [_line(c) for c in foes] if foes else []))
     if len(text) > CONTEXT_CHARS:
         text = text[:CONTEXT_CHARS].rsplit("\n", 1)[0] + "\n(state truncated; call tk_state)"
@@ -1028,6 +1088,8 @@ def _collect(tool_name: str = "", result="", session_id: str = "", **_kw) -> Non
 
 _ACT = r"(?:attacks?|strikes?|swings?|slashes|stabs?|casts?|shoots?|fires?|lunges?|charges|moves?|runs?|leaps?|bites?|slams?|hits?)"
 _DEATH_WORDS = re.compile(r"\b(?:dies|died|dead|falls|fallen|collapses|slain|killed|drops?|unconscious|lifeless|cannot|can't|unable|no longer)\b", re.I)
+_CLAUSE_BREAK = re.compile(r"[,;:]|\b(?:and|then|but|while|as|before|after)\s+(?-i:[A-Z])", re.I)  # the verb has another subject
+_SUBJECT_CUE = re.compile(r"(?:[.!?,;:\n\"'(*_)-]|\b(?:and|but|then|while|as|when|until|before|after|meanwhile|now))\s*(?:the\s+)?$", re.I)  # name opens a clause
 _DAMAGE = re.compile(r"\b(\d{1,4})\s*(?:points?\s+of\s+)?(?:[a-z]+\s+)?damage\b", re.I)
 _HIT_POINTS = re.compile(r"\b(\d{1,4})\s*(?:hp|hit\s+points?)\b", re.I)
 _CLAIMED_ROLL = re.compile(r"\b(?:rolls?|rolled|rolling|natural|nat)\s+(?:a\s+|an\s+)?(?:natural\s+)?(?:total\s+of\s+)?(\d{1,3})\b", re.I)
@@ -1040,8 +1102,9 @@ def _check_narration(text: str, camp: dict, produced: set) -> list[str]:
     creatures = camp["creatures"][:24]
     for c in creatures:
         if c["status"] != "ok" or c["hp"] <= 0:
-            for m in re.finditer(rf"\b{re.escape(c['name'])}\b[^.!?\n]{{0,40}}?\b{_ACT}\b", text, re.I):
-                if not _DEATH_WORDS.search(m.group(0)):
+            for m in re.finditer(rf"\b{re.escape(c['name'])}\b(?!')[^.!?\n]{{0,40}}?\b{_ACT}\b", text, re.I):
+                subject = m.start() == 0 or _SUBJECT_CUE.search(text[max(0, m.start() - 30):m.start()])
+                if subject and not (_DEATH_WORDS.search(m.group(0)) or _CLAUSE_BREAK.search(m.group(0)[len(c["name"]):])):
                     problems.append(f"{c['name']} is at 0 HP ({c['status']}) and cannot act")
                     break
     hp = {n for c in creatures for n in (c["hp"], c["max_hp"], c["temp_hp"])}
@@ -1049,7 +1112,7 @@ def _check_narration(text: str, camp: dict, produced: set) -> list[str]:
                                   (_HIT_POINTS, "hit point figure", produced | hp),
                                   (_CLAIMED_ROLL, "dice roll", produced),
                                   (_CLAIMED_AC, "AC", produced | {rules.effective_ac(c) for c in creatures}),
-                                  (_CLAIMED_DC, "DC", produced)):
+                                  (_CLAIMED_DC, "DC", produced | {10})):  # 10 is the fixed death save DC, quoted as a rule
         bad = sorted({int(n) for n in pattern.findall(text) if int(n) not in known})
         if bad:
             problems.append(f"{label} {', '.join(map(str, bad))} was not returned by a tk_ tool this turn")
@@ -1089,25 +1152,25 @@ def _flag(description: str) -> dict:
     return {"type": "boolean", "description": description}
 
 
-_CHAR = _str("Character id: fighter, rogue, wizard or cleric.")
+_CHAR = _str("Character id: fighter, rogue, wizard or cleric. Omit when the sender has only one character.")
 _ROLL = {"advantage": _flag("Grant advantage if the situation earns it."),
          "disadvantage": _flag("Impose disadvantage if the situation earns it.")}
 _MONSTER = _obj(["type"], type=_str("goblin, hobgoblin, kobold, wolf, dire_wolf, skeleton, zombie, orc, bandit, "
                                     "bandit_captain, giant_rat or ogre."),
-                count=_num("How many, default 1."), x=_num("Column for a single monster."), y=_num("Row for a single monster."))
+                count=_num("How many, default 1."), x=_num("Column to place it, or to cluster a group around."), y=_num("Row to place it, or to cluster a group around."))
 
 TOOLS = [
     ("tk_state", tk_state, "Read the authoritative campaign: grid, initiative, every creature's HP, position and conditions, and which characters the sender controls. Call it before narrating state and whenever unsure.", _obj()),
-    ("tk_new_campaign", tk_new_campaign, "Start a campaign in this chat. The caller becomes game master. Replacing an existing campaign needs replace=true.", _obj(scene=_str("One or two sentences of opening scene."), replace=_flag("Wipe the existing campaign."))),
+    ("tk_new_campaign", tk_new_campaign, "Start a brand-new campaign in this chat. Call it only when the player asks to begin or restart a campaign; never to start a fight, add characters or resume play (use tk_state, tk_claim_character, tk_start_combat). The caller becomes game master. Replacing an existing campaign wipes it and needs replace=true.", _obj(scene=_str("One or two sentences of opening scene."), replace=_flag("Wipe the existing campaign."))),
     ("tk_claim_character", tk_claim_character, "Claim a pregenerated level 3 character (fighter, rogue, wizard, cleric) for the sender. One per player, between fights.", _obj(["character"], character=_CHAR)),
     ("tk_roll", tk_roll, "Roll dice such as 2d6+3, 4d6kh3 or 1d20. Use it for any roll that does not change game state. Never invent dice results.", _obj(["formula"], formula=_str("Dice formula, at most 64 characters."), why=_str("What the roll is for."))),
-    ("tk_check", tk_check, "Roll an ability or skill check for the sender's character, optionally against a DC. Works any time and uses no action.", _obj(["character", "skill_or_ability"], character=_CHAR, skill_or_ability=_str("Ability (dex) or skill (stealth, perception)."), dc=_num("Difficulty class, 1-40."), **_ROLL)),
-    ("tk_save", tk_save, "Roll a saving throw for the sender's character against a DC. Works any time and uses no action.", _obj(["character", "ability", "dc"], character=_CHAR, ability=_str("str, dex, con, int, wis or cha."), dc=_num("Difficulty class, 1-40."), **_ROLL)),
-    ("tk_attack", tk_attack, "Make a weapon attack for the sender's character on their turn. Rolls to hit against AC, applies damage and reports the result. Refuses when out of range or out of turn.", _obj(["character", "target"], character=_CHAR, target=_str("Enemy id such as goblin-1."), attack=_str("Attack name, default the first."), cover=_num("0, 2 or 5."), **_ROLL)),
-    ("tk_cast", tk_cast, "Cast a spell for the sender's character on their turn. Spends the slot, rolls attacks or saves and applies the results.", _obj(["character", "spell"], character=_CHAR, spell=_str("Spell name, such as fire bolt."), targets={"type": "array", "items": {"type": "string"}, "description": "Creature ids; empty for self spells."}, slot_level=_num("Slot level to upcast with."))),
-    ("tk_move", tk_move, "Move the sender's character to a grid square (x 0-11, y 0-9, 5 ft per square), limited by speed. Leaving an enemy's reach provokes its opportunity attack unless disengage=true.", _obj(["character", "x", "y"], character=_CHAR, x=_num("Column."), y=_num("Row."), disengage=_flag("Spend the action to avoid opportunity attacks."))),
+    ("tk_check", tk_check, "Roll an ability or skill check for the sender's character, optionally against a DC. Works any time and uses no action.", _obj(["skill_or_ability"], character=_CHAR, skill_or_ability=_str("Ability (dex) or skill (stealth, perception)."), dc=_num("Difficulty class, 1-40."), **_ROLL)),
+    ("tk_save", tk_save, "Roll a saving throw for the sender's character against a DC. Works any time and uses no action.", _obj(["ability", "dc"], character=_CHAR, ability=_str("str, dex, con, int, wis or cha."), dc=_num("Difficulty class, 1-40."), **_ROLL)),
+    ("tk_attack", tk_attack, "Make a weapon attack for the sender's character on their turn. Rolls to hit against AC, applies damage and reports the result. Refuses when out of range or out of turn.", _obj(["target"], character=_CHAR, target=_str("Enemy id such as goblin-1 (a name like Goblin 1 also works)."), attack=_str("Attack name, default the first."), cover=_num("0, 2 or 5."), **_ROLL)),
+    ("tk_cast", tk_cast, "Cast a spell for the sender's character on their turn. Spends the slot, rolls attacks or saves and applies the results.", _obj(["spell"], character=_CHAR, spell=_str("Spell name, such as fire bolt."), targets={"type": "array", "items": {"type": "string"}, "description": "Creature ids; empty for self spells."}, slot_level=_num("Slot level to upcast with."))),
+    ("tk_move", tk_move, "Move the sender's character to a grid square (x 0-11, y 0-9, 5 ft per square), limited by speed. Give x and y, or toward=<creature id> to get adjacent. Leaving an enemy's reach provokes its opportunity attack unless disengage=true.", _obj([], character=_CHAR, x=_num("Column (with y)."), y=_num("Row (with x)."), toward=_str("Creature id to close in on: moves to the free square nearest it within movement left. Use instead of x and y to get next to a foe."), disengage=_flag("Spend the action to avoid opportunity attacks."))),
     ("tk_next_turn", tk_next_turn, "End the active character's turn. Plays every monster turn until a character is up again and returns what the monsters did. The game master may pass end_combat=true.", _obj(end_combat=_flag("Game master only: end the fight now."))),
-    ("tk_death_save", tk_death_save, "Roll a death saving throw for a character at 0 HP on their turn. It ends their turn.", _obj(["character"], character=_CHAR)),
+    ("tk_death_save", tk_death_save, "Roll a death saving throw for a character at 0 HP on their turn. It ends their turn. Use this, never tk_check or tk_save, whenever a character is at 0 HP.", _obj(character=_CHAR)),
     ("tk_rest", tk_rest, "Short rest (spend hit dice for one character) or long rest (game master, whole party). Not during combat.", _obj(["kind"], kind=_str("short or long."), character=_CHAR, hit_dice=_num("Hit dice to spend on a short rest."))),
     ("tk_start_combat", tk_start_combat, "Game master only. Spawn SRD monsters, roll initiative and start combat. Monsters act automatically until a character is up.", _obj(["monsters"], monsters={"type": "array", "description": "Monsters to spawn.", "items": _MONSTER})),
     ("tk_damage", tk_damage, "Game master only. Apply damage from a trap, fall or other ruling to any creature. Resistance, temp HP and death rules still apply.", _obj(["target"], target=_str("Creature id."), amount=_num("Fixed damage."), formula=_str("Dice formula instead of amount."), damage_type=_str("Damage type, default bludgeoning."), reason=_str("Why."), critical=_flag("Treat as a critical hit."))),

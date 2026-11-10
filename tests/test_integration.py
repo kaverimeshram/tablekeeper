@@ -575,3 +575,80 @@ class CommandTests(LoadedPlugin):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LivePlayTests(LoadedPlugin):
+    """Behaviour a real mid-tier model needed in a live Hermes session (nemotron via OpenRouter)."""
+
+    def setUp(self):
+        self.cli = lambda tool, args=None: self.call(tool, args, platform="cli", chat="")
+        self.cli("tk_new_campaign", {"replace": True})
+        self.cli("tk_claim_character", {"character": "fighter"})
+
+    def spawn_goblins(self, seed=3, monsters=None):
+        self.seed(seed)
+        res = self.cli("tk_start_combat", {"monsters": monsters or [{"type": "goblin", "count": 3, "x": 5, "y": 5}]})
+        self.assertTrue(res["ok"], res)
+        return res
+
+    def test_a_group_with_one_position_clusters_around_it(self):
+        res = self.cli("tk_start_combat", {"monsters": [{"type": "goblin", "count": 3, "x": 8, "y": 5}]})
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["spawned"], ["goblin-1", "goblin-2", "goblin-3"])
+        spots = {tuple(c["pos"]) for c in self.cli("tk_state")["creatures"] if c["kind"] == "monster"}
+        self.assertEqual(len(spots), 3)
+
+    def test_creature_references_forgive_case_spaces_and_dashes(self):
+        self.spawn_goblins()
+        for ref in ("Goblin 1", "goblin 1", "goblin-1", "goblin1", "GOBLIN_1"):
+            res = self.cli("tk_damage", {"target": ref, "amount": 0})
+            self.assertTrue(res["ok"], (ref, res))
+            self.assertEqual(res["target"]["id"], "goblin-1")
+
+    def test_character_defaults_to_the_senders_only_character(self):
+        self.assertEqual(self.cli("tk_check", {"skill_or_ability": "perception", "dc": 5})["character"], "fighter")
+        self.cli("tk_claim_character", {"character": "wizard"})
+        res = self.cli("tk_check", {"skill_or_ability": "perception"})
+        self.assertEqual(res["refused"], "invalid_input")
+        self.assertIn("fighter, wizard", res["message"])
+
+    def test_character_is_optional_in_every_schema(self):
+        from tools.registry import registry
+        for name in ("tk_check", "tk_save", "tk_attack", "tk_cast", "tk_move", "tk_death_save", "tk_rest"):
+            required = registry.get_entry(name).schema["parameters"]["required"]
+            self.assertNotIn("character", required, name)
+
+    def test_move_toward_a_foe_closes_by_the_movement_left(self):
+        self.spawn_goblins(monsters=[{"type": "goblin", "x": 11, "y": 0}])
+        for _ in range(8):
+            if self.cli("tk_state")["active"] == "fighter":
+                break
+            self.cli("tk_next_turn")
+
+        def gap():
+            by = {c["id"]: c["pos"] for c in self.cli("tk_state")["creatures"]}
+            return max(abs(by["goblin-1"][0] - by["fighter"][0]), abs(by["goblin-1"][1] - by["fighter"][1]))
+        before = gap()
+        mv = self.cli("tk_move", {"toward": "goblin 1"})
+        self.assertTrue(mv["ok"], mv)
+        self.assertGreater(before, 1)
+        self.assertEqual(gap(), max(1, before - 6), "30 ft is 6 squares, stopping next to the goblin")
+        self.assertLessEqual(mv["feet"], 30)
+        self.assertEqual(self.cli("tk_move", {"toward": "fighter"})["refused"], "invalid_input")
+
+    def test_a_character_at_zero_hp_is_pointed_to_the_death_save(self):
+        self.cli("tk_damage", {"target": "fighter", "amount": 28})
+        for tool, args in (("tk_check", {"skill_or_ability": "constitution", "dc": 10}), ("tk_save", {"ability": "con", "dc": 10})):
+            res = self.cli(tool, args)
+            self.assertEqual(res["refused"], "cannot_act", tool)
+            self.assertIn("tk_death_save", res["message"])
+
+    def test_campaign_exists_refusal_does_not_invite_a_wipe(self):
+        res = self.cli("tk_new_campaign", {"name": "Goblin Cave", "description": "A dark cave"})
+        self.assertEqual(res["refused"], "campaign_exists")
+        self.assertIn("explicitly asked", res["message"])
+        self.assertEqual(len(self.cli("tk_state")["creatures"]), 1, "the party survived the refused call")
+
+    def test_new_campaign_reads_the_scene_from_the_names_a_model_uses(self):
+        self.assertTrue(self.cli("tk_new_campaign", {"replace": True, "description": "A dark cave"})["ok"])
+        self.assertEqual(self.cli("tk_state")["scene"], "A dark cave")
