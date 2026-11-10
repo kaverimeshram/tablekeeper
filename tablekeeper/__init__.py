@@ -403,7 +403,7 @@ def _ok(**fields) -> dict:
 
 # argument names a model reaches for when the schema is a tool_search away; the canonical name wins when both appear
 ALIASES = {"attacker": "character", "actor": "character", "caster": "character", "attack_name": "attack",
-           "weapon": "attack", "foes": "monsters", "enemies": "monsters", "spell_name": "spell", "targets_ids": "targets", "creature": "target"}
+           "weapon": "attack", "dice": "formula", "foes": "monsters", "enemies": "monsters", "spell_name": "spell", "targets_ids": "targets", "creature": "target"}
 
 
 def _canonical(args: dict) -> dict:
@@ -760,10 +760,12 @@ def tk_cast(args):
 # ---------------------------------------------------------------- game master tools
 
 def _amount(args: dict) -> tuple[int, dict | None]:
-    if args.get("formula"):
-        rolled = rules.roll(_text(args, "formula", limit=64), rng=RNG)
+    raw = args.get("formula") or next((args[k] for k in ("amount", "heal", "healing", "damage", "dice")
+                                       if args.get(k) is not None), None)
+    if isinstance(raw, str) and re.search(r"\dd\d", raw):  # a model puts dice in the amount slot
+        rolled = rules.roll(raw.strip()[:64], rng=RNG)
         return max(0, rolled["total"]), rolled
-    return _int(args, "amount", None, 0, 1000), None
+    return _int({"amount": raw}, "amount", None, 0, 1000), None
 
 
 @_tool

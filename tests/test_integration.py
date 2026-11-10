@@ -763,3 +763,13 @@ class ModelNamingTests(LoadedPlugin):
                 break
             self.cli("tk_next_turn")
         self.assertEqual(self.cli("tk_attack", {"target": "goblin-1", "name": "Longsword"})["refused"], "out_of_range")
+
+    def test_healing_dice_in_the_amount_or_heal_slot_are_rolled(self):
+        self.cli("tk_damage", {"target": "fighter", "amount": 20})
+        res = self.cli("tk_heal", {"target": "fighter", "heal": "2d4+2"})
+        self.assertTrue(res["ok"], res)
+        self.assertTrue(4 <= res["healed"] <= 10)
+        res = self.cli("tk_heal", {"target": "fighter", "amount": "1d1+0"})
+        self.assertEqual(res["healed"], 1)
+        self.assertEqual(self.cli("tk_heal", {"target": "fighter"})["refused"], "invalid_input")
+        self.assertEqual(self.cli("tk_roll", {"dice": "1d1"})["total"], 1)
