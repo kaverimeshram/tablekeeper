@@ -688,3 +688,49 @@ class LivePlayTests(LoadedPlugin):
     def test_alias_does_not_override_the_real_argument(self):
         self.cli("tk_claim_character", {"character": "wizard"})
         self.assertEqual(self.cli("tk_check", {"character": "wizard", "attacker": "fighter", "skill_or_ability": "arcana"})["character"], "wizard")
+
+
+class LocalSessionInjectionTests(LoadedPlugin):
+    """The CLI has one shared campaign; only sessions that play it get the state block."""
+
+    def setUp(self):
+        self.call("tk_new_campaign", {"replace": True}, platform="cli", chat="")
+        self.call("tk_claim_character", {"character": "fighter"}, platform="cli", chat="")
+
+    def pre(self, session):
+        from gateway.session_context import clear_session_vars, set_session_vars
+        tokens = set_session_vars(platform="cli")
+        try:
+            return self.mgr.invoke_hook("pre_llm_call", session_id=session, user_message="hi", conversation_history=[],
+                                        is_first_turn=False, model="m", platform="cli")
+        finally:
+            clear_session_vars(tokens)
+
+    def after_tool(self, session, name, result):
+        from gateway.session_context import clear_session_vars, set_session_vars
+        tokens = set_session_vars(platform="cli")
+        try:
+            self.mgr.invoke_hook("post_tool_call", tool_name=name, args={}, result=json.dumps(result), session_id=session)
+            return self.mgr.invoke_hook("transform_llm_output", response_text="Brann takes 99 damage.", session_id=session,
+                                        model="m", platform="cli")
+        finally:
+            clear_session_vars(tokens)
+
+    def test_an_unrelated_local_session_gets_no_state_block(self):
+        self.assertEqual(self.pre("babysit-session"), [])
+
+    def test_a_session_that_calls_a_tk_tool_gets_the_block_from_its_next_turn(self):
+        self.assertEqual(self.pre("play-1"), [])
+        guarded = self.after_tool("play-1", "tk_state", {"ok": True})
+        self.assertIn("99", guarded[0], "the narration guard covers the turn whose first tool call opened the session")
+        self.assertIn("TABLEKEEPER", self.pre("play-1")[0]["context"])
+        self.assertEqual(self.pre("babysit-session"), [])
+
+    def test_a_non_tk_tool_does_not_enrol_a_session(self):
+        self.after_tool("terminal-session", "terminal", {"ok": True})
+        self.assertEqual(self.pre("terminal-session"), [])
+
+    def test_the_table_command_enrols_the_session(self):
+        from hermes_cli.plugins import get_plugin_command_handler
+        get_plugin_command_handler("table")("status", session_id="cmd-session", platform="cli")
+        self.assertIn("TABLEKEEPER", self.pre("cmd-session")[0]["context"])

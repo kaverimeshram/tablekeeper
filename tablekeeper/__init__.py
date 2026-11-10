@@ -23,6 +23,8 @@ CONTEXT_CHARS = 2200  # about 600 tokens of compact text
 MAX_MONSTERS = 12
 _DBS: dict[str, object] = {}
 _TURNS: dict[str, dict] = {}
+_PLAYING: dict[str, None] = {}  # local sessions that used a tk_ tool or /table; only they get the state block
+# ponytail: in memory, so a resumed CLI session gets the state block again after its first tk_ call or /table use
 
 
 class Refusal(Exception):
@@ -994,7 +996,16 @@ def _status_text(camp: dict) -> str:
         + (f", {rules.state(c)}" if rules.state(c) != "ok" else "") for c in camp["creatures"]])
 
 
-def _command(raw_args: str, *, platform: str = "", source=None, **_kw) -> str:
+def _mark_playing(session_id: str) -> None:
+    if session_id:
+        _PLAYING.pop(session_id, None)
+        _PLAYING[session_id] = None
+        if len(_PLAYING) > 256:
+            _PLAYING.pop(next(iter(_PLAYING)))
+
+
+def _command(raw_args: str, *, platform: str = "", source=None, session_id: str = "", **_kw) -> str:
+    _mark_playing(session_id)
     sub, _, rest = raw_args.strip().partition(" ")
     sub, rest = (sub or "status").lower(), rest.strip()
     try:
@@ -1071,6 +1082,8 @@ def _turn_hook(session_id: str = "", **_kw):
         who = _identity()
     except Refusal:
         return None
+    if who["local"] and session_id not in _PLAYING:
+        return None  # the CLI campaign is shared by every local session; unrelated sessions stay untouched
     with LOCK:
         camp = store.load(_db(), who["chat"])
     if camp is None:
@@ -1094,9 +1107,15 @@ def _numbers(value, out: set) -> None:
 
 def _collect(tool_name: str = "", result="", session_id: str = "", **_kw) -> None:
     """post_tool_call: every integer a tk_ tool returned this turn is a number narration may use."""
-    turn = _TURNS.get(session_id)
-    if turn is None or not tool_name.startswith("tk_"):
+    if not tool_name.startswith("tk_"):
         return
+    _mark_playing(session_id)
+    turn = _TURNS.get(session_id)
+    if turn is None:  # the first tool call of a session arrives before any state block
+        try:
+            turn = _TURNS[session_id] = {"chat": _identity()["chat"], "numbers": set()}
+        except Refusal:
+            return
     try:
         _numbers(json.loads(result) if isinstance(result, str) else result, turn["numbers"])
     except json.JSONDecodeError:
