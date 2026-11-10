@@ -403,7 +403,7 @@ def _ok(**fields) -> dict:
 
 # argument names a model reaches for when the schema is a tool_search away; the canonical name wins when both appear
 ALIASES = {"attacker": "character", "actor": "character", "caster": "character", "attack_name": "attack",
-           "weapon": "attack", "spell_name": "spell", "targets_ids": "targets", "creature": "target"}
+           "weapon": "attack", "foes": "monsters", "enemies": "monsters", "spell_name": "spell", "targets_ids": "targets", "creature": "target"}
 
 
 def _canonical(args: dict) -> dict:
@@ -833,7 +833,7 @@ def _spawn_monsters(camp: dict, specs) -> list[dict]:
     made = []
     for spec in specs:
         spec = {"type": spec} if isinstance(spec, str) else spec
-        key = re.sub(r"[^a-z]+", "_", str(spec.get("type") or spec.get("name") or spec.get("monster") or "").lower()).strip("_")
+        key = re.sub(r"[^a-z]+", "_", str(spec.get("type") or spec.get("name") or spec.get("monster") or spec.get("kind") or "").lower()).strip("_")
         if key not in srd.MONSTERS:
             raise Refusal("unknown_monster", f"Monsters: {', '.join(srd.MONSTERS)}.")
         count = _int(spec, "count", 1, 1, MAX_MONSTERS)
@@ -1208,7 +1208,7 @@ TOOLS = [
     ("tk_next_turn", tk_next_turn, "End the active character's turn. Plays every monster turn until a character is up again and returns what the monsters did. The game master may pass end_combat=true.", _obj(end_combat=_flag("Game master only: end the fight now."))),
     ("tk_death_save", tk_death_save, "Roll a death saving throw for a character at 0 HP on their turn. It ends their turn. Use this, never tk_check or tk_save, whenever a character is at 0 HP.", _obj(character=_CHAR)),
     ("tk_rest", tk_rest, "Short rest (spend hit dice for one character) or long rest (game master, whole party). Not during combat.", _obj(["kind"], kind=_str("short or long."), character=_CHAR, hit_dice=_num("Hit dice to spend on a short rest."))),
-    ("tk_start_combat", tk_start_combat, "Game master only. Spawn SRD monsters, roll initiative and start combat. Monsters act automatically until a character is up.", _obj(["monsters"], monsters={"type": "array", "description": "Monsters to spawn.", "items": _MONSTER})),
+    ("tk_start_combat", tk_start_combat, "Game master only. Spawn SRD monsters, roll initiative and start combat. Monsters act automatically until a character is up.", _obj(monsters={"type": "array", "description": "Monsters to spawn.", "items": _MONSTER})),
     ("tk_damage", tk_damage, "Game master only. Apply damage from a trap, fall or other ruling to any creature. Resistance, temp HP and death rules still apply.", _obj(["target"], target=_str("Creature id."), amount=_num("Fixed damage."), formula=_str("Dice formula instead of amount."), damage_type=_str("Damage type, default bludgeoning."), reason=_str("Why."), critical=_flag("Treat as a critical hit."))),
     ("tk_heal", tk_heal, "Game master only. Heal a creature by ruling. Restores consciousness at 0 HP.", _obj(["target"], target=_str("Creature id."), amount=_num("Fixed healing."), formula=_str("Dice formula instead of amount."), reason=_str("Why."))),
     ("tk_condition", tk_condition, "Game master only. Add or remove a condition (blinded, prone, poisoned, ...). Use stable to stabilise a character at 0 HP.", _obj(["target", "condition"], target=_str("Creature id."), condition=_str("Condition name."), remove=_flag("Remove instead of add."))),

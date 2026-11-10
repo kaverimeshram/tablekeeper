@@ -747,6 +747,15 @@ class ModelNamingTests(LoadedPlugin):
         self.assertTrue(res["ok"], res)
         self.assertEqual(sorted(res["spawned"]), ["dire_wolf-1", "goblin-1"])
 
+    def test_foes_with_a_kind_start_a_fight(self):
+        res = self.cli("tk_start_combat", {"foes": [{"kind": "goblin", "count": 2}]})
+        self.assertEqual(res["spawned"], ["goblin-1", "goblin-2"])
+
+    def test_no_monsters_at_all_is_a_refusal_that_shows_the_shape(self):
+        res = self.cli("tk_start_combat", {})
+        self.assertEqual(res["refused"], "invalid_input")
+        self.assertIn('"type": "goblin"', res["message"])
+
     def test_attack_may_be_named_by_name(self):
         self.cli("tk_start_combat", {"monsters": [{"type": "goblin", "x": 11, "y": 5}]})
         for _ in range(8):
