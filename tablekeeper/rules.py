@@ -273,7 +273,8 @@ def _del_cond(c: dict, name: str) -> bool:
     return True
 
 
-def add_condition(c: dict, name: str) -> dict:
+def add_condition(c: dict, name: str, *, source: str | None = None) -> dict:
+    """Add a condition. ``source`` (a creature id) is remembered for charmed and frightened."""
     name = str(name).strip().lower()
     if name not in CONDITIONS:
         raise RuleError(f"Unknown condition: {name}")
@@ -281,6 +282,8 @@ def add_condition(c: dict, name: str) -> dict:
     if name in (c.get("condition_immune") or []):
         return {"added": False, "conditions": list(c["conditions"]), "notes": [f"{c['name']} is immune to {name}"]}
     added = _add_cond(c, name)
+    if source and name in ("charmed", "frightened"):
+        effects(c)[f"{name}_by"] = source
     if added and name == "unconscious":
         _add_cond(c, "prone")
         notes.append("drops what it holds and falls prone")
@@ -293,6 +296,7 @@ def add_condition(c: dict, name: str) -> dict:
 def remove_condition(c: dict, name: str) -> dict:
     name = str(name).strip().lower()
     removed = _del_cond(c, name)
+    effects(c).pop(f"{name}_by", None)
     if name == "unconscious":
         effects(c).pop("asleep", None)
     if name == "paralyzed":
@@ -403,6 +407,11 @@ def _close(attacker: dict, target: dict, melee: bool) -> bool:
     return bool(attacker.get("pos") and target.get("pos")) and grid_distance(attacker, target) <= 1
 
 
+def _refuse_charmer(attacker: dict, target: dict) -> None:
+    if "charmed" in conditions(attacker) and effects(attacker).get("charmed_by") == target["id"]:
+        raise RuleError(f"{attacker['name']} is charmed by {target['name']} and cannot target them with harm")
+
+
 def attack_modifiers(attacker: dict, target: dict, melee: bool = True, *, in_melee: bool = False) -> dict:
     """Advantage, disadvantage and auto-crit that conditions and effects grant an attack."""
     a, t = conditions(attacker), conditions(target)
@@ -480,6 +489,7 @@ def resolve_attack(attacker: dict, target: dict, attack: dict, *, melee: bool = 
         raise RuleError(f"{target['name']} is already dead")
     if not can_act(attacker):
         raise RuleError(f"{attacker['name']} cannot attack right now")
+    _refuse_charmer(attacker, target)
     ar = _attack_roll(attacker, target, int(attack["to_hit"]), melee=melee, cover=cover, rng=rng,
                       advantage=advantage, disadvantage=disadvantage, in_melee=in_melee,
                       crit_range=int(attacker.get("crit_range", 20)))
@@ -577,7 +587,7 @@ def _apply(c: dict, comps: list[tuple[int, str]], critical: bool, rng=None) -> d
     last_type = comps[-1][1] if comps else None
     if state(c) == "dead":
         return {"applied": 0, "absorbed": 0, "hp_lost": 0, "hp": c["hp"], "temp_hp": c.get("temp_hp", 0),
-                "state": "dead", "notes": notes + ["already dead"], "death_saves": dict(c["death_saves"]),
+                "state": "dead", "notes": notes + ["already dead"], "death_saves": dict(c.get("death_saves", {"s": 0, "f": 0})),
                 "concentration_dc": None}
     temp = c.get("temp_hp", 0)
     absorbed = min(temp, applied)
@@ -625,7 +635,7 @@ def _apply(c: dict, comps: list[tuple[int, str]], critical: bool, rng=None) -> d
                 if _del_cond(c, "stable"):
                     notes.append("no longer stable")
                 gain = 2 if critical else 1
-                saves["f"] += gain
+                saves["f"] = min(3, saves["f"] + gain)
                 notes.append(f"damage at 0 hit points: {gain} death save failure{'s' if gain > 1 else ''}")
                 if saves["f"] >= 3:
                     _death_state(c, notes, "three death save failures")
@@ -682,13 +692,13 @@ def death_save(creature: dict, *, rng=None) -> dict:
         notes.append("natural 20: regains 1 hit point and is conscious")
     elif nat == 1:
         outcome = "critical_failure"
-        saves["f"] += 2
+        saves["f"] = min(3, saves["f"] + 2)
     elif nat >= 10:
         outcome = "success"
         saves["s"] += 1
     else:
         outcome = "failure"
-        saves["f"] += 1
+        saves["f"] = min(3, saves["f"] + 1)
     if outcome != "critical_success":
         if saves["s"] >= 3:
             _add_cond(creature, "stable")
@@ -833,7 +843,7 @@ def long_rest(creature: dict) -> dict:
     creature["death_saves"] = {"s": 0, "f": 0}
     creature["concentration"] = None
     creature["effects"] = {}
-    for name in ("unconscious", "stable"):
+    for name in ("unconscious", "stable", "prone"):
         _del_cond(creature, name)
     return {"hp": creature["hp"], "slots": {k: list(v) for k, v in creature.get("slots", {}).items()},
             "hit_dice": list(creature["hit_dice"]), "hit_dice_regained": creature["hit_dice"][0] - cur,
@@ -873,6 +883,8 @@ def _entry(target: dict, **kw) -> dict:
 
 
 def _hit_entry(caster, target, sp, formula, rng, *, in_melee) -> dict:
+    if state(target) == "dead":
+        return _entry(target, hit=False, critical=False, damage=None, notes=["already dead"])
     ar = _attack_roll(caster, target, spell_attack_bonus(caster), melee=False,
                       cover=target.get("cover", 0), rng=rng, advantage=False, disadvantage=False,
                       in_melee=in_melee)
@@ -894,10 +906,8 @@ def _hit_entry(caster, target, sp, formula, rng, *, in_melee) -> dict:
     return entry
 
 
-def _alloc(targets: list[dict], n: int, what: str) -> list[dict]:
+def _alloc(targets: list[dict], n: int) -> list[dict]:
     """One target per dart or ray when the counts match, otherwise round-robin."""
-    if len(targets) > n:
-        raise RuleError(f"{n} {what} cannot cover {len(targets)} targets")
     return list(targets) if len(targets) == n else [targets[i % len(targets)] for i in range(n)]
 
 
@@ -938,6 +948,12 @@ def cast(caster: dict, spell_name: str, targets: list[dict], *, slot_level: int 
         raise RuleError(f"{sp['name']} can target at most {cap} creature{'s' if cap != 1 else ''}")
     if kind in ("attack", "rays", "save", "hold", "heal") and not caster.get("spell_ability"):
         raise RuleError(f"{caster['name']} has no spellcasting ability")
+    if kind in ("attack", "rays", "darts", "save", "hold", "sleep"):
+        for t in targets:
+            _refuse_charmer(caster, t)
+    n_proj = sp["count"] + sp["count_per_level"] * up if kind in ("rays", "darts") else 0
+    if n_proj and len(targets) > n_proj:
+        raise RuleError(f"{sp['name']} has {n_proj} {'rays' if kind == 'rays' else 'darts'}, too few for {len(targets)} targets")
 
     # validated: commit
     ended = None
@@ -954,14 +970,12 @@ def cast(caster: dict, spell_name: str, targets: list[dict], *, slot_level: int 
         formula = _dice_formula(count, sp["dice"][1])
         results = [_hit_entry(caster, t, sp, formula, rng, in_melee=in_melee) for t in targets]
     elif kind == "rays":
-        n = sp["count"] + sp["count_per_level"] * up
         formula = _dice_formula(*sp["dice"])
-        results = [_hit_entry(caster, t, sp, formula, rng, in_melee=in_melee) for t in _alloc(targets, n, "rays")]
-        notes.append(f"{n} rays")
+        results = [_hit_entry(caster, t, sp, formula, rng, in_melee=in_melee) for t in _alloc(targets, n_proj)]
+        notes.append(f"{n_proj} rays")
     elif kind == "darts":
-        n = sp["count"] + sp["count_per_level"] * up
         formula = _dice_formula(sp["dice"][0], sp["dice"][1], sp["flat"])
-        for t in _alloc(targets, n, "darts"):
+        for t in _alloc(targets, n_proj):
             if state(t) == "dead":
                 results.append(_entry(t, damage=None, notes=["already dead"]))
             elif "shield" in effects(t):
@@ -972,7 +986,7 @@ def cast(caster: dict, spell_name: str, targets: list[dict], *, slot_level: int 
                 out = _apply(t, [(max(0, r["total"]), "force")], False, rng)
                 results.append(_entry(t, damage={"rolls": [r], "raw": r["total"], "type": "force", **out},
                                     notes=[], state=out["state"], hp=out["hp"]))
-        notes.append(f"{n} darts")
+        notes.append(f"{n_proj} darts")
     elif kind == "save":
         count = _tier(cl) * sp["dice"][0] if sp.get("cantrip_scaling") else sp["dice"][0] + sp["per_level"][0] * up
         r = roll(_dice_formula(count, sp["dice"][1]), rng=rng)

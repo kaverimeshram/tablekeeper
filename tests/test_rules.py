@@ -712,6 +712,16 @@ class DeathSaveTests(unittest.TestCase):
         rules.death_save(c, rng=Seq(1))
         self.assertEqual(rules.death_save(c, rng=Seq(2))["state"], "dead")
 
+    def test_failures_never_exceed_three(self):
+        c = lowdown(pc())
+        c["death_saves"]["f"] = 2
+        rules.death_save(c, rng=Seq(1))
+        self.assertEqual(c["death_saves"]["f"], 3)
+        d = lowdown(pc())
+        d["death_saves"]["f"] = 2
+        rules.apply_damage(d, 3, "fire", critical=True)
+        self.assertEqual(d["death_saves"]["f"], 3)
+
     def test_refused_unless_down(self):
         for c in (pc(), pc(hp=0, conditions=["dead"]), pc(hp=0, conditions=["stable"]), mon("goblin", hp=0)):
             with self.assertRaises(RuleError):
@@ -855,8 +865,7 @@ class RestTests(unittest.TestCase):
             rules.long_rest(pc(conditions=["dead"], hp=0))
         c = lowdown(pc(conditions=["unconscious", "prone", "stable"]))
         rules.long_rest(c)
-        self.assertNotIn("unconscious", c["conditions"])
-        self.assertNotIn("stable", c["conditions"])
+        self.assertEqual(c["conditions"], [])
 
 
 class SpellTests(unittest.TestCase):
@@ -1596,6 +1605,122 @@ class TacticsTests(unittest.TestCase):
         self.assertEqual(plan["move"]["squares"], 2)
 
 
+class CharmTests(unittest.TestCase):
+    def test_charmed_creature_cannot_attack_its_charmer(self):
+        g, f = mon("goblin"), pc("fighter")
+        rules.add_condition(g, "charmed", source="fighter")
+        self.assertEqual(g["effects"]["charmed_by"], "fighter")
+        with self.assertRaises(RuleError):
+            rules.resolve_attack(g, f, g["attacks"][0], rng=Seq(10))
+        other = pc("rogue")
+        r = rules.resolve_attack(g, other, g["attacks"][0], rng=Seq(10, 1))
+        self.assertTrue(r["hit"])
+
+    def test_charmed_caster_cannot_target_charmer_and_keeps_its_slot(self):
+        w, g = pc("wizard"), mon("goblin")
+        rules.add_condition(w, "charmed", source="goblin")
+        with self.assertRaises(RuleError):
+            rules.cast(w, "burning hands", [g], rng=Seq())
+        self.assertEqual(w["slots"]["1"][0], 4)
+        rules.cast(w, "shield", [], rng=Seq())
+
+    def test_removing_the_condition_forgets_the_source(self):
+        g = mon("goblin")
+        rules.add_condition(g, "charmed", source="fighter")
+        rules.remove_condition(g, "charmed")
+        self.assertNotIn("charmed_by", g["effects"])
+        rules.resolve_attack(g, pc("fighter"), g["attacks"][0], rng=Seq(10, 1))
+
+
+class SpellGuardTests(unittest.TestCase):
+    def test_too_many_targets_for_projectiles_refused_before_spending_a_slot(self):
+        w = pc("wizard")
+        crowd = [mon("goblin", id=f"g{i}") for i in range(4)]
+        for spell in ("magic missile", "scorching ray"):
+            with self.assertRaises(RuleError):
+                rules.cast(w, spell, crowd, slot_level=2 if spell == "scorching ray" else 1, rng=Seq())
+        self.assertEqual((w["slots"]["1"][0], w["slots"]["2"][0]), (4, 2))
+
+    def test_attack_spells_skip_dead_targets(self):
+        w, dead = pc("wizard"), mon("goblin", conditions=["dead"], hp=0)
+        r = rules.cast(w, "fire bolt", [dead], rng=Seq())
+        self.assertEqual(r["results"][0]["notes"], ["already dead"])
+        r = rules.cast(w, "magic missile", [dead], rng=Seq())
+        self.assertEqual(r["results"][0]["notes"], ["already dead"])
+
+    def test_wounded_target_goes_down_from_spell_damage(self):
+        w = pc("wizard")
+        f = pc("fighter", hp=2)
+        r = rules.cast(w, "magic missile", [f], rng=Seq(3, 3, 3))
+        self.assertEqual(f["hp"], 0)
+        self.assertEqual(r["results"][-1]["state"], "down")
+        self.assertGreaterEqual(f["death_saves"]["f"], 1)  # later darts hit a creature at 0 hp
+
+
+class ContractTests(unittest.TestCase):
+    def test_every_srd_spell_casts_and_all_results_serialise(self):
+        import json
+        for key in srd.SPELLS:
+            caster = pc("wizard", id="caster", level=11)
+            caster["spells"] = list(srd.SPELLS)
+            caster["slots"] = {str(i): [9, 9] for i in range(1, 10)}
+            caster["traits"].append("disciple_of_life")
+            hurt = pc("fighter", id="hurt", hp=5)
+            tgt = mon("bandit", id="bandit")
+            sp = srd.SPELLS[key]
+            targets = [hurt] if sp["kind"] == "heal" else [tgt]
+            r = rules.cast(caster, key, targets, rng=random.Random(3))
+            json.dumps(r)
+            json.dumps([caster, tgt, hurt])
+            self.assertEqual(r["key"], key)
+            self.assertEqual(r["slot_used"], sp["level"] or None)
+
+    def test_all_other_results_serialise(self):
+        import json
+        f, g, w = pc("fighter", id="f", pos=[1, 1]), mon("wolf", id="g", pos=[2, 1]), pc("wizard", id="w", pos=[1, 2])
+        rng = random.Random(9)
+        outs = [rules.roll("4d6kh3+1d4-2", rng=rng), rules.d20(advantage=True, rng=rng),
+                rules.saving_throw(f, "dex", 12, rng=rng), rules.ability_check(f, "athletics", 12, rng=rng),
+                rules.resolve_attack(g, f, g["attacks"][0], rng=rng),
+                rules.attack_modifiers(g, f, True), rules.apply_damage(f, 4, "fire"), rules.heal(f, 2),
+                rules.monster_action(g, [g, f, w], rng=rng), rules.short_rest(f, 1, rng=rng),
+                rules.concentration_check(pc("cleric", concentration={"spell": "bless", "targets": []}), 9, rng=rng)]
+        lowdown(w)
+        outs += [rules.death_save(w, rng=rng), rules.long_rest(f), rules.add_condition(f, "prone")]
+        json.dumps(outs)
+        json.dumps([f, g, w])
+
+    def test_creatures_with_only_the_contract_keys_work(self):
+        keys = SrdContentTests.CONTRACT_KEYS
+        slim = lambda c: {k: v for k, v in c.items() if k in keys}
+        f, g = slim(srd.new_character("fighter")), slim(srd.new_monster("goblin"))
+        f["pos"], g["pos"] = [1, 1], [2, 1]
+        rules.resolve_attack(f, g, f["attacks"][0], rng=Seq(15, 4), apply=True)
+        self.assertEqual(g["hp"], 0)
+        self.assertIn("dead", g["conditions"])
+        rules.apply_damage(f, 28, "fire")
+        self.assertEqual(rules.state(f), "down")
+        self.assertEqual(rules.death_save(f, rng=Seq(12))["successes"], 1)
+        rules.saving_throw(f, "str", 10, rng=Seq(10))
+        rules.ability_check(f, "athletics", 10, rng=Seq(10))
+        rules.roll_initiative([f, g], rng=Seq(5, 5, 1, 1, 3, 7))
+        rules.long_rest(f)
+        self.assertEqual(f["hp"], 28)
+        o = slim(srd.new_monster("orc"))
+        o["pos"] = [5, 5]
+        rules.monster_action(o, [o, f], rng=Seq(15, 4, 5), apply=True)
+        with self.assertRaises(RuleError):
+            rules.cast(f, "fire bolt", [g])
+
+    def test_public_names_other_lanes_call_exist(self):
+        for name in ("roll", "d20", "resolve_attack", "apply_damage", "heal", "saving_throw", "ability_check",
+                     "cast", "death_save", "roll_initiative", "monster_action", "short_rest", "long_rest",
+                     "attack_modifiers", "passive_perception", "concentration_check"):
+            self.assertTrue(callable(getattr(rules, name)), name)
+        for name in ("MONSTERS", "CHARACTERS", "SPELLS", "ATTRIBUTION"):
+            self.assertTrue(hasattr(srd, name), name)
+
+
 class IntegrationTests(unittest.TestCase):
     def test_four_round_skirmish_is_reproducible_and_ends_in_a_known_state(self):
         def fight(seed):
@@ -1624,6 +1749,79 @@ class IntegrationTests(unittest.TestCase):
         for _, hp, pos, _ in fight(11):
             self.assertGreaterEqual(hp, 0)
             self.assertTrue(0 <= pos[0] < 12 and 0 <= pos[1] < 10)
+
+
+class SkirmishInvariantTests(unittest.TestCase):
+    """Random fights across every monster, spell and character: state must stay legal."""
+
+    def fight(self, seed):
+        rng = random.Random(seed)
+        used = set()
+
+        def free(xs):
+            while True:
+                p = (rng.randrange(*xs), rng.randrange(0, 10))
+                if p not in used:
+                    used.add(p)
+                    return list(p)
+        party = [srd.new_character(k, id=k, owner=k, pos=free((0, 5))) for k in srd.CHARACTERS]
+        foes = [srd.new_monster(rng.choice(list(srd.MONSTERS)), id=f"m{i}", pos=free((5, 12)))
+                for i in range(rng.randrange(1, 7))]
+        everyone = party + foes
+        order = rules.roll_initiative(everyone, rng=rng)
+        by_id = {c["id"]: c for c in everyone}
+        for _ in range(8):
+            for cid in order:
+                c = by_id[cid]
+                st = rules.state(c)
+                if st == "dead" or (c["kind"] == "pc" and st == "stable"):
+                    continue
+                if c["kind"] == "pc" and st == "down":
+                    rules.death_save(c, rng=rng)
+                    continue
+                rules.start_turn(c, everyone)
+                if rules.can_act(c):
+                    self.turn(c, party, foes, everyone, rng)
+                rules.end_turn(c, everyone, rng=rng)
+        return everyone
+
+    def turn(self, c, party, foes, everyone, rng):
+        if c["kind"] == "monster":
+            rules.monster_action(c, everyone, rng=rng, apply=True)
+            return
+        alive = [m for m in foes if rules.state(m) != "dead"]
+        if not alive:
+            return
+        target = rng.choice(alive)
+        if c["slots"] and rng.random() < 0.6:
+            spell = rng.choice(c["spells"])
+            kind = srd.SPELLS[spell]["kind"]
+            targets = [c] if kind == "self" else [rng.choice(party)] if kind in ("heal", "buff") else [target]
+            try:
+                rules.cast(c, spell, targets, rng=rng, creatures=everyone)
+            except RuleError:
+                pass
+        else:
+            rules.resolve_attack(c, target, c["attacks"][0], melee=True, rng=rng, apply=True)
+
+    def test_invariants_hold_over_random_fights(self):
+        import json
+        for seed in range(100):
+            everyone = self.fight(seed)
+            living = []
+            for c in everyone:
+                self.assertTrue(0 <= c["hp"] <= c["max_hp"], (seed, c["id"], c["hp"]))
+                self.assertGreaterEqual(c["temp_hp"], 0)
+                self.assertTrue(0 <= c["death_saves"]["f"] <= 3 and 0 <= c["death_saves"]["s"] <= 3)
+                self.assertTrue(0 <= c["pos"][0] < rules.GRID_W and 0 <= c["pos"][1] < rules.GRID_H)
+                if rules.state(c) == "dead":
+                    self.assertEqual(c["hp"], 0)
+                else:
+                    living.append(tuple(c["pos"]))
+                for pair in c["slots"].values():
+                    self.assertTrue(0 <= pair[0] <= pair[1])
+                json.dumps(c)
+            self.assertEqual(len(living), len(set(living)), f"two living creatures share a square (seed {seed})")
 
 
 if __name__ == "__main__":
