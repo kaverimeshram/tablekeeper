@@ -1380,7 +1380,7 @@ class SrdContentTests(unittest.TestCase):
 
     def test_no_em_dashes_in_content(self):
         blob = repr(srd.MONSTERS) + repr(srd.CHARACTERS) + repr(srd.SPELLS)
-        self.assertNotIn("—", blob)
+        self.assertNotIn("\u2014", blob)
         self.assertNotIn(" -- ", blob)
 
 
