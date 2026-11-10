@@ -180,7 +180,7 @@ const data = { status: 'live', campaign, campaigns: [{ chat: hostile.text, scene
 const out = { tags: new Set(), attrs: [], texts: [] }
 expand(TabletopView({ data, model: buildModel(campaign), floats: [{ id: 'f', key: 'a', delta: -3 }], fresh: new Set([1]), uid: 'u' }), out)
 const registered = []
-plugin.register({ registerMany: cs => registered.push(...cs) })
+plugin.register({ registerMany: cs => registered.push(...cs), onDispose: () => {} })
 const longName = creatureView({ id: 'x', name: 'n'.repeat(500), hp: 4, max_hp: 4, pos: [50, 50], death_saves: { f: 3 } }, 0)
 const roll = rollView({ formula: 'f'.repeat(500), dice: Array(200).fill(3), total: 'NaN' })
 console.log(JSON.stringify({ tags: [...out.tags], attrs: out.attrs, texts: out.texts, registered: registered.map(c => [c.id, c.area, c.data || null]), longName, roll }))
@@ -229,7 +229,7 @@ class PaneRenderTests(unittest.TestCase):
         specifiers = set(re.findall(r"""from\s+['"]([^'"]+)['"]""", self.source)) | set(re.findall(r"""import\s*\(\s*['"]([^'"]+)""", self.source))
         self.assertEqual(specifiers, {"react", "@hermes/plugin-sdk"})
         used = set(re.findall(r"ctx\.(\w+)", self.source))
-        self.assertLessEqual(used, {"rest", "setInterval", "setTimeout", "onEvent", "storage", "registerMany"})
+        self.assertLessEqual(used, {"rest", "setInterval", "setTimeout", "onEvent", "storage", "registerMany", "onDispose", "addEventListener"})
         sdk = re.search(r"import \{([^}]*)\} from '@hermes/plugin-sdk'", self.source).group(1)
         self.assertEqual({n.strip() for n in sdk.split(",")}, {"PANES_AREA", "ROUTES_AREA", "SIDEBAR_NAV_AREA", "relativeTime"})
 
