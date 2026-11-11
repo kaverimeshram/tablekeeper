@@ -65,7 +65,7 @@ check('tray_layout_never_overlaps', fail => {
 })
 
 check('young_red_dragon_has_a_large_hand_built_mini_and_breath_roll_metadata', fail => {
-  const look = lookOf({ id: 'young-red-dragon-1', name: 'Young Red Dragon' })
+  const look = lookOf({ id: 'young_red_dragon-1', name: 'Young Red Dragon' })
   const mini = buildMini(look)
   const xs = Array.from({ length: mini.v.length / 12 }, (_, k) => mini.v[k * 12])
   if (look !== 'young_red_dragon') fail(`dragon look is ${look}`)

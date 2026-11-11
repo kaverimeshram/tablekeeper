@@ -1183,7 +1183,7 @@ class SrdContentTests(unittest.TestCase):
         "bandit_captain": (15, 65, 30, "2", 450, "Medium"),
         "giant_rat": (12, 7, 30, "1/8", 25, "Small"),
         "ogre": (11, 59, 40, "2", 450, "Large"),
-        "young-red-dragon": (18, 178, 40, "10", 5900, "Large"),
+        "young_red_dragon": (18, 178, 40, "10", 5900, "Large"),
     }
     CONTRACT_KEYS = {"id", "name", "kind", "owner", "ac", "hp", "max_hp", "temp_hp", "abilities", "proficiency",
                      "saves", "skills", "attacks", "resist", "immune", "vuln", "conditions", "death_saves",
@@ -1251,7 +1251,7 @@ class SrdContentTests(unittest.TestCase):
         self.assertEqual(srd.MONSTERS["bandit_captain"]["saves"], ["str", "dex", "wis"])
 
     def test_young_red_dragon_stat_block_matches_srd(self):
-        dragon = srd.MONSTERS["young-red-dragon"]
+        dragon = srd.MONSTERS["young_red_dragon"]
         self.assertEqual((dragon["ac"], dragon["hp"], dragon["max_hp"], dragon["size"], dragon["cr"], dragon["xp"]),
                          (18, 178, 178, "Large", "10", 5900))
         self.assertEqual(dragon["hp_formula"], "17d10+85")
@@ -1622,7 +1622,7 @@ class TacticsTests(unittest.TestCase):
         self.assertEqual(plan["move"]["squares"], 2)
 
     def test_cone_uses_square_centres_and_excludes_outside_targets(self):
-        dragon = mon("young-red-dragon", id="dragon", pos=[8, 4])
+        dragon = mon("young_red_dragon", id="dragon", pos=[8, 4])
         near = pc("fighter", id="near", pos=[3, 4])
         edge = pc("rogue", id="edge", pos=[4, 5])
         outside = pc("wizard", id="outside", pos=[3, 8])
@@ -1632,7 +1632,7 @@ class TacticsTests(unittest.TestCase):
         self.assertEqual([c["id"] for c in rules.cone_targets(dragon, near, [dragon, near, edge, outside], 6)], ["near", "edge"])
 
     def test_dragon_breaths_for_two_hostiles_and_multiattacks_otherwise(self):
-        dragon = mon("young-red-dragon", id="dragon", pos=[8, 4])
+        dragon = mon("young_red_dragon", id="dragon", pos=[8, 4])
         f = pc("fighter", id="f", pos=[3, 4])
         r = pc("rogue", id="r", pos=[4, 4])
         plan = rules.monster_action(dragon, [dragon, f, r], rng=random.Random(4))

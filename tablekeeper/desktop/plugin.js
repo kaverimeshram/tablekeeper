@@ -853,18 +853,24 @@ const MINI_BUILDERS = {
     for (const s of [-1, 1]) {
       b.add(sphere(0.025, 6, 4), ART.eyeGold, F_GLOW, [s * 0.12, 1.03, 1.29])
       for (const z of [-0.72, 0.43]) {
-        b.bar([s * 0.23, 0.5, z], [s * 0.28, 0.08, z + 0.1], 0.085, 0.06, red)
-        b.add(box(0.13, 0.06, 0.18), dark, 0, [s * 0.28, 0.04, z + 0.12])
+        b.bar([s * 0.23, 0.55, z], [s * 0.29, 0.08, z + 0.1], 0.13, 0.085, red)
+        b.add(box(0.17, 0.07, 0.22), dark, 0, [s * 0.29, 0.04, z + 0.13])
       }
       b.bar([s * 0.27, 0.87, 0.12], [s * 0.85, 1.2, -0.02], 0.045, 0.027, dark)
       b.bar([s * 0.85, 1.2, -0.02], [s * 1.45, 0.98, -0.35], 0.027, 0.014, dark)
       b.bar([s * 0.85, 1.2, -0.02], [s * 1.27, 0.73, 0.38], 0.022, 0.014, red)
-      b.add(triangle([s * 0.28, 0.87, 0.12], [s * 1.45, 0.98, -0.35], [s * 1.27, 0.73, 0.38]), shade(red, 0.72))
+      // membranes on both faces so the wing never vanishes when the camera sees its back
+      const root = [s * 0.28, 0.87, 0.12], tip = [s * 1.45, 0.98, -0.35], fore = [s * 1.27, 0.73, 0.38], hind = [s * 0.3, 0.8, -0.55]
+      b.bar([s * 0.85, 1.2, -0.02], [s * 0.95, 0.62, -0.62], 0.022, 0.014, dark)
+      for (const [a, c, d] of [[root, tip, fore], [root, hind, tip], [hind, [s * 0.95, 0.62, -0.62], tip]]) {
+        b.add(triangle(a, c, d), shade(red, 0.72))
+        b.add(triangle(a, d, c), shade(red, 0.6))
+      }
     }
-    let tail = [0, 0.58, -1.24]
-    for (let k = 1; k <= 5; k++) {
-      const next = [0, 0.57 - k * 0.045, -1.24 - k * 0.19]
-      b.bar(tail, next, 0.12 - k * 0.016, 0.1 - k * 0.016, red)
+    let tail = [0, 0.6, -0.55]
+    for (let k = 1; k <= 6; k++) {
+      const next = [Math.sin(k * 0.7) * 0.06, 0.6 - k * 0.07, -0.55 - k * 0.19]
+      b.bar(tail, next, 0.17 - k * 0.02, 0.15 - k * 0.02, red)
       tail = next
     }
     b.add(cone(0.07, 0.28, 5), dark, 0, tail, [-Math.PI / 2, 0, 0])

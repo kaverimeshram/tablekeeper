@@ -212,6 +212,13 @@ class CombatTests(LoadedPlugin):
         self.assertTrue(res["ok"], res)
         return res
 
+    def test_start_combat_accepts_every_spelling_of_the_dragon(self):
+        for i, name in enumerate(("young red dragon", "Young Red Dragon", "young-red-dragon", "young_red_dragon")):
+            self.chat = f"cb-dragon-{i}"
+            self.start(7, [{"type": name}])
+            ids = [c["id"] for c in self.state(self.chat)["creatures"] if c["kind"] != "pc"]
+            self.assertEqual(ids, ["young_red_dragon-1"], name)
+
     def owner_of(self, cid):
         return {"fighter": GM, "rogue": BOB, "wizard": CAROL}[cid]
 
@@ -350,7 +357,7 @@ class DragonTests(LoadedPlugin):
                 assert a <= value <= b, (value, a, b)
                 return value
 
-        dragon = self.plugin.srd.new_monster("young-red-dragon", id="dragon", pos=[8, 4])
+        dragon = self.plugin.srd.new_monster("young_red_dragon", id="dragon", pos=[8, 4])
         fighter = self.plugin.srd.new_character("fighter", id="fighter")
         rogue = self.plugin.srd.new_character("rogue", id="rogue")
         wizard = self.plugin.srd.new_character("wizard", id="wizard")
@@ -377,7 +384,7 @@ class DragonTests(LoadedPlugin):
                 assert (a, b) == (1, 6)
                 return self.value
 
-        dragon = self.plugin.srd.new_monster("young-red-dragon", id="dragon")
+        dragon = self.plugin.srd.new_monster("young_red_dragon", id="dragon")
         camp = {"round": 1, "active": "", "creatures": [dragon], "_rolls": [], "_log": []}
         self.plugin.RNG = Fixed(4)
         self.plugin._start_turn(camp, dragon)

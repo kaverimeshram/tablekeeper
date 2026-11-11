@@ -165,8 +165,8 @@ MONSTERS = {
         abilities=(19, 8, 16, 5, 7, 7), senses="darkvision 60 ft., passive Perception 8",
         attacks=[_attack("Greatclub", 6, "2d8+4", "bludgeoning"),
                  _attack("Javelin", 6, "2d6+4", "piercing", rng=(30, 120))]),
-    "young-red-dragon": _monster(
-        "young-red-dragon", "Young Red Dragon", cr="10", xp=5900, hp_formula="17d10+85", ctype="dragon", size="Large",
+    "young_red_dragon": _monster(
+        "young_red_dragon", "Young Red Dragon", cr="10", xp=5900, hp_formula="17d10+85", ctype="dragon", size="Large",
         ac=18, hp=178, hit_die="d10", hit_dice_count=17, speed=40,
         abilities=(23, 10, 21, 14, 11, 19), proficiency=4, saves=["dex", "con", "wis", "cha"],
         attacks=[_attack("Bite", 10, "2d10+6", "piercing", reach=10,
