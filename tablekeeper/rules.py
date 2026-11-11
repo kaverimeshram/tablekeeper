@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import math
 from collections import deque
 
 from . import srd
@@ -310,6 +311,34 @@ def grid_distance(a: dict, b: dict) -> int:
     if not pa or not pb:
         return 1
     return max(abs(pa[0] - pb[0]), abs(pa[1] - pb[1]))
+
+
+def cone_squares(origin: dict, target: dict, squares: int = 6) -> list[list[int]]:
+    """Grid squares in a 60-degree cone, measured between square centres."""
+    op, tp = origin.get("pos"), target.get("pos")
+    if not op or not tp:
+        return []
+    dx, dy = tp[0] - op[0], tp[1] - op[1]
+    length = math.hypot(dx, dy)
+    if not length:
+        return []
+    ux, uy = dx / length, dy / length
+    cells = []
+    for x in range(GRID_W):
+        for y in range(GRID_H):
+            vx, vy = x - op[0], y - op[1]
+            d = math.hypot(vx, vy)
+            if 0 < d <= squares and (vx * ux + vy * uy) / d >= math.sqrt(3) / 2:
+                cells.append([x, y])
+    return cells
+
+
+def cone_targets(origin: dict, target: dict, creatures: list[dict], squares: int = 6) -> list[dict]:
+    """Living creatures in the cone; creatures without positions count as the aimed target."""
+    if not origin.get("pos") or not target.get("pos"):
+        return [target]
+    cells = {tuple(p) for p in cone_squares(origin, target, squares)}
+    return [c for c in creatures if c is not origin and c.get("pos") and state(c) != "dead" and tuple(c["pos"]) in cells]
 
 
 # ---------------------------------------------------------------- checks, saves, skills
@@ -1149,6 +1178,16 @@ def monster_action(monster: dict, combatants: list[dict], *, rng=None, apply: bo
     if not pool:
         return {"action": "none", "target": None, "reason": "no targets"}
     has_pos = bool(monster.get("pos"))
+
+    if monster.get("breath", {}).get("charged") and has_pos:
+        direction = min(pool, key=lambda t: (grid_distance(monster, t), _target_key(t)))
+        caught = cone_targets(monster, direction, combatants, monster["breath"]["range"] // 5)
+        hostile = [c for c in caught if c.get("kind") != monster.get("kind") and state(c) != "dead"]
+        if len(hostile) >= 2:
+            return {"action": "breath", "target": direction["id"], "targets": [c["id"] for c in caught],
+                    "area": {"shape": "cone", "origin": list(monster["pos"]), "toward": list(direction["pos"]),
+                             "squares": monster["breath"]["range"] // 5,
+                             "cells": cone_squares(monster, direction, monster["breath"]["range"] // 5)}}
 
     if "flees_at_quarter_hp" in _traits(monster) and monster["hp"] * 4 <= monster["max_hp"] and has_pos and awake:
         cells = _reachable(monster, combatants, max(1, effective_speed(monster) * 2 // 5))

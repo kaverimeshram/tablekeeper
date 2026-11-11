@@ -381,6 +381,30 @@ def _monster_turn(camp: dict, m: dict) -> dict:
     elif act["action"] == "flee":
         report["flee"] = {**act["flee"], "to_square": _label(act["flee"]["to"])}
         _log(camp, "move", f"{m['name']} flees to {_label(act['flee']['to'])}.")
+    elif act["action"] == "breath":
+        breath = m["breath"]
+        rolled = rules.roll(breath["damage"], rng=RNG)
+        breath["charged"] = False
+        report.update(target=act["target"], targets=[], area=act["area"], damage_roll=rolled["total"])
+        _rec_roll(camp, m, "breath", breath["name"], rolled, target=act["target"], targets=act["targets"], area=act["area"],
+                  type=breath["type"])
+        _log(camp, "breath", f"{m['name']} uses {breath['name']} toward {_label(act['area']['toward'])}; "
+             f"{rolled['total']} {breath['type']} damage, DC {breath['dc']} Dexterity save.")
+        for cid in act["targets"]:
+            tgt = ids[cid]
+            save = rules.saving_throw(tgt, breath["save"], breath["dc"], rng=RNG)
+            _rec_save(camp, tgt, f"{breath['name']} Dexterity save", save, target=cid, actor=m["id"], area="cone")
+            amount = rolled["total"] // 2 if save["success"] else rolled["total"]
+            outcome = rules.apply_damage(tgt, amount, breath["type"], rng=RNG)
+            conc = _concentration(camp, tgt, outcome["applied"])
+            entry = {"target": cid, "save": save, "damage": outcome["applied"], "hp": tgt["hp"],
+                     "state": rules.state(tgt), "notes": outcome["notes"]}
+            if conc:
+                entry["concentration"] = conc
+            report["targets"].append(entry)
+            _log(camp, "breath-save", f"{tgt['name']} {'succeeds' if save['success'] else 'fails'} the Dexterity save "
+                 f"({save['total'] if save['total'] is not None else 'automatic failure'} vs DC {breath['dc']}); "
+                 f"takes {outcome['applied']} {breath['type']} damage, {tgt['hp']}/{tgt['max_hp']} HP.")
     else:
         if act.get("move"):
             report["move"] = {**act["move"], "to_square": _label(act["move"]["to"])}
@@ -396,6 +420,13 @@ def _monster_turn(camp: dict, m: dict) -> dict:
 
 def _start_turn(camp: dict, c: dict) -> None:
     camp["active"], c["turn"] = c["id"], _new_turn()
+    breath = c.get("breath")
+    if c["kind"] == "monster" and breath and not breath.get("charged"):
+        recharge = rules.roll("1d6", rng=RNG)
+        breath["charged"] = recharge["total"] in breath["recharge"]
+        _rec_roll(camp, c, "recharge", f"{breath['name']} recharge", recharge)
+        _log(camp, "recharge", f"{c['name']} rolls {recharge['total']} to recharge {breath['name']}: "
+             f"{'recharged' if breath['charged'] else 'still spent'}.")
     for note in rules.start_turn(c, camp["creatures"])["notes"]:
         _log(camp, "effect", note)
 

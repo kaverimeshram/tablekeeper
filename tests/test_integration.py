@@ -341,6 +341,58 @@ class CombatTests(LoadedPlugin):
         self.assertTrue(set(actions) <= {"attack", "move", "flee", "none"})
 
 
+class DragonTests(LoadedPlugin):
+    def test_breath_turn_resolves_each_save_half_damage_concentration_and_feed_events(self):
+        class Fixed:
+            def __init__(self, values): self.values = list(values)
+            def randint(self, a, b):
+                value = self.values.pop(0)
+                assert a <= value <= b, (value, a, b)
+                return value
+
+        dragon = self.plugin.srd.new_monster("young-red-dragon", id="dragon", pos=[8, 4])
+        fighter = self.plugin.srd.new_character("fighter", id="fighter")
+        rogue = self.plugin.srd.new_character("rogue", id="rogue")
+        wizard = self.plugin.srd.new_character("wizard", id="wizard")
+        fighter["pos"], rogue["pos"], wizard["pos"] = [3, 4], [4, 4], [3, 5]
+        fighter["concentration"] = {"spell": "bless", "targets": ["fighter"], "slot": 1}
+        camp = {"round": 1, "active": "dragon", "creatures": [dragon, fighter, rogue, wizard], "_rolls": [], "_log": []}
+        self.plugin.RNG = Fixed([1] * 16 + [1, 1, 20, 1])
+        report = self.plugin._monster_turn(camp, dragon)
+        self.assertEqual(report["action"], "breath")
+        self.assertEqual([t["target"] for t in report["targets"]], ["fighter", "rogue", "wizard"])
+        self.assertEqual([t["damage"] for t in report["targets"]], [16, 8, 16], report)
+        self.assertEqual([fighter["hp"], rogue["hp"], wizard["hp"]], [12, 16, 4])
+        self.assertIsNone(fighter["concentration"])
+        self.assertIn("breath", [r["kind"] for r in camp["_rolls"]])
+        saves = [r for r in camp["_rolls"] if r["kind"] == "save"]
+        self.assertEqual([r["target"] for r in saves if r.get("target")], ["fighter", "rogue", "wizard"])
+        self.assertTrue(any("concentration" in r["why"] for r in saves))
+        self.assertTrue(any("uses Fire Breath" in text for _, text in camp["_log"]))
+
+    def test_recharge_starts_charged_and_only_recharges_on_five_or_six(self):
+        class Fixed:
+            def __init__(self, value): self.value = value
+            def randint(self, a, b):
+                assert (a, b) == (1, 6)
+                return self.value
+
+        dragon = self.plugin.srd.new_monster("young-red-dragon", id="dragon")
+        camp = {"round": 1, "active": "", "creatures": [dragon], "_rolls": [], "_log": []}
+        self.plugin.RNG = Fixed(4)
+        self.plugin._start_turn(camp, dragon)
+        self.assertTrue(dragon["breath"]["charged"])
+        self.assertEqual(camp["_rolls"], [], "a charged breath does not roll for recharge")
+        dragon["breath"]["charged"] = False
+        self.plugin.RNG = Fixed(4)
+        self.plugin._start_turn(camp, dragon)
+        self.assertFalse(dragon["breath"]["charged"])
+        self.plugin.RNG = Fixed(5)
+        self.plugin._start_turn(camp, dragon)
+        self.assertTrue(dragon["breath"]["charged"])
+        self.assertEqual([r["total"] for r in camp["_rolls"]], [4, 5])
+
+
 class TableRuleTests(LoadedPlugin):
     def setUp(self):
         self.chat = f"tr-{self._testMethodName}"
