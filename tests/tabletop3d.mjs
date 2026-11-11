@@ -1,7 +1,7 @@
 // Pure-math checks for the 3D tabletop. Imports the real plugin.js (React and the SDK shimmed) and prints
 // { check: [failures] }. Nothing here touches a DOM or a GL context.
 import {
-  DIE_SIDES, MINI_LOOKS, box, buildMini, combine, cone, cyl, diceOf, diceShape, dieMesh, faceUpQuat, homeFrame, HOME_EL, homeProj, insetRect, insetView, MINI_SCALE_UP, MINI_XZ, SWAY_AZ, swayDistance, lathe, lookOf, wantsCinematic,
+  DIE_SIDES, MINI_LOOKS, box, buildMini, combine, cone, cyl, diceOf, diceShape, dieMesh, faceUpQuat, homeFrame, HOME_EL, homeProj, insetRect, insetView, MINI_SCALE_UP, MINI_XZ, SWAY_AZ, swayDistance, lathe, lookOf, rollView, wantsCinematic,
   m4look, m4mul, m4persp, orbitEye, project, qrot, seeded, sphere, throwPlan, throwPose, topValue, torus, trayLayout, cellWorld, stagedWorld, xf
 } from './plugin.mjs'
 
@@ -62,6 +62,19 @@ check('tray_layout_never_overlaps', fail => {
       for (let j = i + 1; j < n; j++) if (Math.hypot(spots[i][0] - spots[j][0], spots[i][1] - spots[j][1]) < 1.2) fail(`dice ${i} and ${j} overlap for n=${n} seed=${seed}`)
     }
   }
+})
+
+check('young_red_dragon_has_a_large_hand_built_mini_and_breath_roll_metadata', fail => {
+  const look = lookOf({ id: 'young-red-dragon-1', name: 'Young Red Dragon' })
+  const mini = buildMini(look)
+  const xs = Array.from({ length: mini.v.length / 12 }, (_, k) => mini.v[k * 12])
+  if (look !== 'young_red_dragon') fail(`dragon look is ${look}`)
+  if (!(mini.radius * MINI_XZ >= 0.9)) fail(`base radius is ${mini.radius * MINI_XZ}`)
+  if (!(Math.max(...xs) - Math.min(...xs) > 1.5)) fail('dragon wings do not span a large miniature')
+  if (!(mini.top > 0.7 && mini.i.length > 500)) fail('dragon shape is missing its sculpted parts')
+  const event = rollView({ kind: 'breath', formula: '16d6', dice: Array(16).fill(2), total: 32,
+    targets: ['fighter'], area: { shape: 'cone', origin: [8, 4], toward: [2, 4], cells: [[7, 4], [6, 4]] } })
+  if (event.kind !== 'breath' || event.targets[0] !== 'fighter' || event.area.cells.length !== 2) fail('breath event metadata was lost')
 })
 
 check('unreadable_dice_are_dropped_not_invented', fail => {
@@ -153,7 +166,8 @@ check('miniatures_are_scaled_up_but_bases_stay_inside_their_square', fail => {
     const g = buildMini(look)
     const foot = g.radius * MINI_XZ
     const large = look === 'ogre' || look === 'dire_wolf'
-    if (foot > (large ? 0.72 : 0.5)) fail(`${look}: base radius ${foot.toFixed(2)} spills out of its square`)
+    const dragon = look === 'young_red_dragon'
+    if (foot > (dragon ? 0.95 : large ? 0.72 : 0.5)) fail(`${look}: base radius ${foot.toFixed(2)} exceeds its footprint`)
     if (foot < 0.3) fail(`${look}: base radius ${foot.toFixed(2)} is too small to read`)
     if (!(g.top > 0.3)) fail(`${look}: the mesh reports no height`)
     let max = 0
@@ -233,8 +247,9 @@ check('every_miniature_builds_and_stays_on_its_base', fail => {
     if (lo[1] < -1e-6) fail(`${look}: goes below the felt (${lo[1]})`)
     if (hi[1] < 0.4 || hi[1] > 2.4) fail(`${look}: height ${hi[1]}`)
     if (hi[1] * MINI_SCALE_UP > 4.2) fail(`${look}: ${(hi[1] * MINI_SCALE_UP).toFixed(1)} squares tall once scaled`)
-    if (Math.max(Math.abs(lo[0]), hi[0], Math.abs(lo[2]), hi[2]) * MINI_XZ > (look === "ogre" || look === "dire_wolf" ? 2.6 : 1.7)) fail(`${look}: reaches more than a square and a half from its base (${lo}/${hi})`)
-    if (!(m.radius * MINI_XZ >= 0.3 && m.radius * MINI_XZ <= 0.72)) fail(`${look}: base radius ${m.radius * MINI_XZ}`)
+    const dragon = look === 'young_red_dragon'
+    if (Math.max(Math.abs(lo[0]), hi[0], Math.abs(lo[2]), hi[2]) * MINI_XZ > (dragon ? 3 : look === "ogre" || look === "dire_wolf" ? 2.6 : 1.7)) fail(`${look}: reaches beyond its footprint (${lo}/${hi})`)
+    if (!(m.radius * MINI_XZ >= 0.3 && m.radius * MINI_XZ <= (dragon ? 0.95 : 0.72))) fail(`${look}: base radius ${m.radius * MINI_XZ}`)
   }
   const tall = h => buildMini(h).v.reduce((m, x, i) => (i % 12 === 1 ? Math.max(m, x) : m), 0)
   if (!(tall('ogre') > tall('goblin') * 1.5)) fail('an ogre must tower over a goblin')

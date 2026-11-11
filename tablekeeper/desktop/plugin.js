@@ -212,6 +212,12 @@ export function rollView(raw) {
     modifier: num(raw?.modifier),
     total: raw?.total == null ? null : num(raw.total),
     damageType: clip(raw?.type, 20),
+    targets: list(raw?.targets).slice(0, 20).map(x => clip(x, 64)),
+    area: raw?.area && Array.isArray(raw.area.origin) && Array.isArray(raw.area.toward) ? {
+      shape: clip(raw.area.shape, 12), origin: raw.area.origin.slice(0, 2).map(x => num(x)),
+      toward: raw.area.toward.slice(0, 2).map(x => num(x)), cells: list(raw.area.cells).slice(0, 120)
+        .filter(p => Array.isArray(p) && p.length >= 2).map(p => p.slice(0, 2).map(x => num(x)))
+    } : null,
     outcome: raw?.crit || raw?.critical ? 'crit' : raw?.hit === true ? 'hit' : raw?.hit === false ? 'miss' : passed === true ? 'success' : passed === false ? 'fail' : ''
   }
 }
@@ -829,13 +835,45 @@ const MINI_BUILDERS = {
     for (let k = 0; k < 4; k++) b.add(cone(0.03, 0.08, 5), ART.steel, F_METAL, [0.55 + Math.cos(k * 1.6) * 0.1, 1.15 + k * 0.05, 0.33 + Math.sin(k * 1.6) * 0.1], qfromTo([0, 1, 0], [Math.cos(k * 1.6), 0.2, Math.sin(k * 1.6)]))
     b.add(sphere(0.07, 6, 4), ART.skin, 0, [0.5, 0.33, 0.1], [0, 0, 0], [1.3, 1.3, 1.3])
   },
+  young_red_dragon(b) {
+    const red = paint(2, 0.78, 0.31), dark = paint(4, 0.48, 0.15), belly = paint(25, 0.88, 0.52)
+    const triangle = (a, c, d) => {
+      const n = vnorm(vcross(vsub(c, a), vsub(d, a)))
+      return { p: [...a, ...c, ...d], n: [...n, ...n, ...n], uv: [0, 0, 1, 0, 0.5, 1], i: [0, 1, 2] }
+    }
+    b.add(sphere(0.34, 12, 8), red, 0, [0, 0.63, -0.12], [0, 0, 0], [1.1, 0.86, 1.65])
+    b.add(sphere(0.25, 10, 7), belly, 0, [0, 0.43, 0.08], [0, 0, 0], [0.9, 0.62, 1.35])
+    b.bar([0, 0.68, 0.4], [0, 1.02, 1.12], 0.2, 0.12, red)
+    b.add(sphere(0.18, 10, 7), red, 0, [0, 1.0, 1.16], [0.24, 0, 0], [0.9, 0.76, 1.2])
+    b.add(box(0.26, 0.09, 0.27), dark, 0, [0, 0.86, 1.39], [0.16, 0, 0])
+    b.add(cone(0.035, 0.26, 6), dark, 0, [-0.12, 1.17, 1.12], [-0.28, 0, -0.22])
+    b.add(cone(0.035, 0.26, 6), dark, 0, [0.12, 1.17, 1.12], [-0.28, 0, 0.22])
+    for (const s of [-1, 1]) {
+      b.add(sphere(0.025, 6, 4), ART.eyeGold, F_GLOW, [s * 0.12, 1.03, 1.29])
+      for (const z of [-0.72, 0.43]) {
+        b.bar([s * 0.23, 0.5, z], [s * 0.28, 0.08, z + 0.1], 0.085, 0.06, red)
+        b.add(box(0.13, 0.06, 0.18), dark, 0, [s * 0.28, 0.04, z + 0.12])
+      }
+      b.bar([s * 0.27, 0.87, 0.12], [s * 0.85, 1.2, -0.02], 0.045, 0.027, dark)
+      b.bar([s * 0.85, 1.2, -0.02], [s * 1.45, 0.98, -0.35], 0.027, 0.014, dark)
+      b.bar([s * 0.85, 1.2, -0.02], [s * 1.27, 0.73, 0.38], 0.022, 0.014, red)
+      b.add(triangle([s * 0.28, 0.87, 0.12], [s * 1.45, 0.98, -0.35], [s * 1.27, 0.73, 0.38]), shade(red, 0.72))
+    }
+    let tail = [0, 0.58, -1.24]
+    for (let k = 1; k <= 5; k++) {
+      const next = [0, 0.57 - k * 0.045, -1.24 - k * 0.19]
+      b.bar(tail, next, 0.12 - k * 0.016, 0.1 - k * 0.016, red)
+      tail = next
+    }
+    b.add(cone(0.07, 0.28, 5), dark, 0, tail, [-Math.PI / 2, 0, 0])
+  },
   generic(b) {
     b.add(lathe([[0, 0], [0.24, 0], [0.22, 0.07], [0.13, 0.26], [0.1, 0.46], [0.18, 0.5], [0.12, 0.55], [0.14, 0.6], [0, 0.62]], 12), TEAM, F_TEAM)
     b.add(sphere(0.17, 10, 6), TEAM, F_TEAM, [0, 0.76, 0])
   }
 }
-const MINI_SCALE = { goblin: 0.82, kobold: 0.78, hobgoblin: 1, orc: 1.1, bandit_captain: 1.08, wolf: 1, dire_wolf: 1.3, giant_rat: 0.9, ogre: 1.38, skeleton: 1, zombie: 1, generic: 1 }
-const MINI_BASE = { ogre: 0.62, dire_wolf: 0.52, wolf: 0.45, orc: 0.45, goblin: 0.38, kobold: 0.36, giant_rat: 0.38 }
+const MINI_SCALE = { goblin: 0.82, kobold: 0.78, hobgoblin: 1, orc: 1.1, bandit_captain: 1.08, wolf: 1, dire_wolf: 1.3, giant_rat: 0.9, ogre: 1.38, young_red_dragon: 0.55, skeleton: 1, zombie: 1, generic: 1 }
+const MINI_BASE = { ogre: 0.62, dire_wolf: 0.52, young_red_dragon: 0.85, wolf: 0.45, orc: 0.45, goblin: 0.38, kobold: 0.36, giant_rat: 0.38 }
 export const MINI_LOOKS = Object.keys(MINI_BUILDERS)
 
 /** Which miniature a creature gets: its srd key, then its class, then the words in its name, else a pawn. */
@@ -854,7 +892,7 @@ const miniCache = new Map()
 /** Merged vertex data for a look, plus the base radius used for its ring and shadow. */
 export function buildMini(look) {
   if (miniCache.has(look)) return miniCache.get(look)
-  const radius = Math.min((MINI_BASE[look] || 0.43) * 1.12, look === 'ogre' || look === 'dire_wolf' ? 0.72 : 0.5) / MINI_XZ
+  const radius = Math.min((MINI_BASE[look] || 0.43) * 1.12, look === 'young_red_dragon' ? 0.95 : look === 'ogre' || look === 'dire_wolf' ? 0.72 : 0.5) / MINI_XZ
   const b = figure(radius, MINI_SCALE[look] || 1)
   ;(MINI_BUILDERS[look] || MINI_BUILDERS.generic)(b)
   const mesh = combine(b.parts)
@@ -1401,7 +1439,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
 
   // ---------------------------------------------------------------- scene state
   const S = {
-    time: 0, minis: new Map(), chat: undefined, seq: -1, queue: [], actions: [], dice: [], nextAt: 0, floats: [], shots: [], active: '', combat: false,
+    time: 0, minis: new Map(), chat: undefined, seq: -1, queue: [], actions: [], dice: [], nextAt: 0, floats: [], shots: [], breaths: [], shakeAt: -9, active: '', combat: false,
     caption: null, hover: '', tray: null, insetK: 0, insetHold: 0, frames: 0, fpsAt: 0, fps: 0, cpu: 0
   }
   const cam = { az: HOME.az, el: HOME.el, zoom: HOME.zoom, home: homeFrame([], 1.6), cells: [], cur: { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, ty: 0.6, tz: 0, dist: 0 }, lastInput: -100, aspect: 1.6 }
@@ -1433,7 +1471,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   const hpColor = frac => toneOf(hpTone(frac))
 
   function reset() {
-    S.minis.clear(); S.queue.length = 0; S.actions.length = 0; S.dice.length = 0; S.floats.forEach(f => f.el.remove()); S.floats.length = 0; S.shots.length = 0
+    S.minis.clear(); S.queue.length = 0; S.actions.length = 0; S.dice.length = 0; S.floats.forEach(f => f.el.remove()); S.floats.length = 0; S.shots.length = 0; S.breaths.length = 0
     S.seq = -1; S.caption = null; cap.style.display = 'none'
   }
 
@@ -1475,7 +1513,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const spots = trayLayout(dice.length, 0.6, rnd)
     const crit = dice.some(d => d.sides === 20 && d.value === 20 && !d.dropped)
     const fumble = !crit && dice.some(d => d.sides === 20 && d.value === 1 && !d.dropped)
-    const palette = crit ? DIE_PALETTE.crit : fumble ? DIE_PALETTE.fumble : roll.kind === 'damage' ? DIE_PALETTE.damage : /heal/i.test(roll.kind + roll.label) ? DIE_PALETTE.heal : DIE_PALETTE.d20
+    const palette = crit ? DIE_PALETTE.crit : fumble ? DIE_PALETTE.fumble : ['damage', 'breath'].includes(roll.kind) ? DIE_PALETTE.damage : /heal/i.test(roll.kind + roll.label) ? DIE_PALETTE.heal : DIE_PALETTE.d20
     let last = 0
     const made = dice.map((d, k) => {
       const { shape, g, tex } = dieFor(d.sides)
@@ -1533,6 +1571,13 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
         }
       })
     } else if (r.kind === 'damage' && tgt) S.actions.push({ at: at - 0.05, fn: () => impact(r.target) })
+    else if (r.kind === 'breath' && att && r.area) S.actions.push({ at, fn: () => {
+      const from = cellWorld(r.area.origin[0], r.area.origin[1]), to = cellWorld(r.area.toward[0], r.area.toward[1])
+      const dx = to[0] - from[0], dz = to[1] - from[1], length = Math.hypot(dx, dz) || 1
+      att.yawGoal = Math.atan2(dx, dz); att.actionUntil = S.time + 1.2; S.shakeAt = S.time
+      S.breaths.push({ from, dir: [dx / length, dz / length], cells: r.area.cells.map(p => cellWorld(p[0], p[1])), at: S.time, dur: 1.2 })
+    } })
+    else if (r.kind === 'save' && tgt) S.actions.push({ at, fn: () => impact(r.target) })
   }
 
   /** Feed a fresh campaign snapshot. Animation is driven by what changed since the last one. */
@@ -1545,7 +1590,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const staged = model.creatures.filter(c => !c.pos)
     const seen = new Set()
     const newRolls = first ? [] : model.rolls.filter(r => r.seq > S.seq)
-    const rollTargets = new Set(newRolls.filter(r => r.target && (r.kind === 'attack' || r.kind === 'damage')).map(r => r.target))
+    const rollTargets = new Set(newRolls.flatMap(r => r.kind === 'breath' ? r.targets : r.target && (r.kind === 'attack' || r.kind === 'damage') ? [r.target] : []))
     for (const c of model.creatures) {
       seen.add(c.key)
       const cell = worldOf(c, staged)
@@ -1608,7 +1653,9 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     }
     if (m.dodge && t - m.dodge < 0.4) { const a = (t - m.dodge) / 0.4; dx += Math.sin(a * Math.PI) * 0.22 }
     if (t - m.shake < 0.45) { const a = 1 - (t - m.shake) / 0.45; dx += Math.sin((t - m.shake) * 70) * 0.07 * a }
-    let d = m.yawGoal - m.yaw
+    const dragon = m.look === 'young_red_dragon'
+    const acting = dragon && t < (m.actionUntil || -1)
+    let d = m.yawGoal + (dragon ? Math.sin(t * 0.55 + m.phase) * 0.018 : 0) - m.yaw
     d = Math.atan2(Math.sin(d), Math.cos(d))
     m.yaw += d * (1 - Math.exp(-dt * 9))
     m.fall += (m.fallGoal - m.fall) * (1 - Math.exp(-dt * (m.fallGoal > m.fall ? 7 : 5)))
@@ -1619,7 +1666,8 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const q = qmul(qaxis([0, 1, 0], m.yaw), qaxis([1, 0, 0], -f * (1.42 + 0.15 * dk)))
     const lift = Math.sin(f * 1.42) * radius * 0.92 * sc - 0.03 * dk
     const y = BOARD_Y + dy + lift
-    m.model = m4trs([m.pos[0] + dx, y, m.pos[1] + dz], q, [MINI_XZ * sc, MINI_SCALE_UP * breathe * sc, MINI_XZ * sc])
+    const wing = dragon ? (acting ? 1.1 + Math.sin(t * 19) * 0.08 : 0.97 + Math.sin(t * 1.1 + m.phase) * 0.035) : 1
+    m.model = m4trs([m.pos[0] + dx, y, m.pos[1] + dz], q, [MINI_XZ * sc * wing, MINI_SCALE_UP * breathe * sc, MINI_XZ * sc])
     m.eyeAt = [m.pos[0] + dx, BOARD_Y + (m.geo.top || 1.2) * MINI_SCALE_UP * (1 - f * 0.8) + dy + 0.12, m.pos[1] + dz]
     m.ground = [m.pos[0] + dx, m.pos[1] + dz]
     if (m.pending && t - m.pending > 6) commit(m)
@@ -1632,6 +1680,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     if (S.queue.length && S.time >= S.nextAt) runEvent(S.queue.shift())
     for (const m of S.minis.values()) stepMini(m, dt)
     S.dice = S.dice.filter(d => !d.leave || S.time - d.leave < 0.35)
+    S.breaths = S.breaths.filter(s => S.time - s.at < s.dur)
     const aim = S.time < S.insetHold ? 1 : 0
     S.insetK += (aim - S.insetK) * (1 - Math.exp(-dt * (aim ? 6 : 1.8)))
     S.shots = S.shots.filter(s => S.time - s.at < s.dur)
@@ -1652,6 +1701,9 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     const el = clamp(cam.cur.el + Math.sin(S.time * 0.1 + 1) * 0.07 * sway, 0.3, 1.45)
     const dist = swayDistance(cam.cur.dist, swing) * cam.cur.zoom * (1 + Math.sin(S.time * 0.07) * 0.04 * sway)
     const target = [cam.cur.tx, cam.cur.ty, cam.cur.tz]
+    const shake = clamp(1 - (S.time - S.shakeAt) / 0.34, 0, 1)
+    target[0] += Math.sin(S.time * 82) * 0.065 * shake
+    target[2] += Math.cos(S.time * 71) * 0.045 * shake
     eyePos = orbitEye(target, az, el, dist)
     view = m4look(eyePos, target)
     vp = m4mul(homeProj(cam.aspect), view)
@@ -1789,6 +1841,23 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       const dead = m.v.state === 'dead'
       drawDecal(flat(m.ground[0], BOARD_Y + 0.008, m.ground[1], r * 1.2), 1, dead ? mixRgb(toneOf('text-secondary'), toneOf('bg-elevated'), 0.5) : hpColor(m.v.frac), dead ? 0.55 : 0.95, clamp(m.vf ?? m.v.frac, 0, 1))
       if (m.v.temp > 0) drawDecal(flat(m.ground[0], BOARD_Y + 0.009, m.ground[1], r * 1.34), 1, toneOf('cyan'), 0.9, clamp(m.v.temp / m.v.max, 0, 1))
+    }
+    for (const breath of S.breaths) {
+      const life = clamp(1 - (S.time - breath.at) / breath.dur, 0, 1)
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE)
+      for (const [x, z] of breath.cells) drawDecal(flat(x, BOARD_Y + 0.012, z, 0.43), 0, [1, 0.34, 0.03], life * 0.22)
+      const yaw = Math.atan2(breath.dir[0], breath.dir[1])
+      const center = [breath.from[0] + breath.dir[0] * 3, BOARD_Y + 0.014, breath.from[1] + breath.dir[1] * 3]
+      const cone = m4trs(center, qmul(qaxis([0, 1, 0], yaw), qaxis([1, 0, 0], -Math.PI / 2)), [3.1, 3.1, 3.1])
+      drawDecal(cone, 4, [1, 0.5, 0.12], life * 0.56)
+      for (let k = 0; k < 12; k++) {
+        const f = ((S.time - breath.at) * 4.5 + k / 12) % 1
+        const spread = (0.04 + f * 0.32) * Math.sin(k * 7.1 + S.time * 9)
+        const x = breath.from[0] + breath.dir[0] * f * 5.8 + -breath.dir[1] * spread
+        const z = breath.from[1] + breath.dir[1] * f * 5.8 + breath.dir[0] * spread
+        drawDecal(bb([x, BOARD_Y + 0.3 + (k % 3) * 0.1, z], 0.08 + (k % 3) * 0.025), 3, [1, 0.56, 0.12], life * 0.75)
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     }
     for (const d of S.dice) if (d.pose && d.pose.done && (d.crit || d.fumble)) {
       const pulse = 0.5 + 0.5 * Math.sin(S.time * 4)

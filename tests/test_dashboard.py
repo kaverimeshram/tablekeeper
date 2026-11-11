@@ -91,6 +91,17 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(got["log"][0]["text"], "Brann hits Goblin")
         self.assertEqual(got["creatures"][0]["pos"], [2, 3])
 
+    def test_dashboard_state_keeps_the_breath_event_and_cone_targets(self):
+        area = {"shape": "cone", "origin": [8, 4], "toward": [3, 4], "squares": 6, "cells": [[7, 4], [6, 4], [5, 4], [4, 4], [3, 4]]}
+        self.seed(rolls=[{"who": "dragon", "name": "Young Red Dragon", "kind": "breath", "why": "Fire Breath",
+                          "dice": [2] * 16, "total": 32, "modifier": 0, "formula": "16d6", "target": "fighter",
+                          "targets": ["fighter", "rogue"], "area": area, "type": "fire"}])
+        state = self.client.get(f"{self.base}/campaign").json()["campaign"]
+        event = state["rolls"][0]
+        self.assertEqual((event["kind"], event["formula"], event["total"]), ("breath", "16d6", 32))
+        self.assertEqual(event["targets"], ["fighter", "rogue"])
+        self.assertEqual(event["area"], area)
+
     def test_chat_selection_latest_default_and_unknown_chat(self):
         self.seed("telegram:1", scene="First")
         self.seed("telegram:2", scene="Second")

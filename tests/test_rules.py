@@ -1183,12 +1183,13 @@ class SrdContentTests(unittest.TestCase):
         "bandit_captain": (15, 65, 30, "2", 450, "Medium"),
         "giant_rat": (12, 7, 30, "1/8", 25, "Small"),
         "ogre": (11, 59, 40, "2", 450, "Large"),
+        "young-red-dragon": (18, 178, 40, "10", 5900, "Large"),
     }
     CONTRACT_KEYS = {"id", "name", "kind", "owner", "ac", "hp", "max_hp", "temp_hp", "abilities", "proficiency",
                      "saves", "skills", "attacks", "resist", "immune", "vuln", "conditions", "death_saves",
                      "slots", "spells", "hit_dice", "pos", "speed", "concentration"}
 
-    def test_twelve_monsters_with_srd_numbers(self):
+    def test_thirteen_monsters_with_srd_numbers(self):
         self.assertEqual(set(srd.MONSTERS), set(self.EXPECTED))
         for key, (ac, hp, speed, cr, xp, size) in self.EXPECTED.items():
             m = srd.MONSTERS[key]
@@ -1248,6 +1249,22 @@ class SrdContentTests(unittest.TestCase):
         self.assertEqual(m["melee"], ["Scimitar", "Scimitar", "Dagger"])
         self.assertEqual(m["ranged"], ["Dagger", "Dagger"])
         self.assertEqual(srd.MONSTERS["bandit_captain"]["saves"], ["str", "dex", "wis"])
+
+    def test_young_red_dragon_stat_block_matches_srd(self):
+        dragon = srd.MONSTERS["young-red-dragon"]
+        self.assertEqual((dragon["ac"], dragon["hp"], dragon["max_hp"], dragon["size"], dragon["cr"], dragon["xp"]),
+                         (18, 178, 178, "Large", "10", 5900))
+        self.assertEqual(dragon["hp_formula"], "17d10+85")
+        self.assertEqual(dragon["abilities"], {"str": 23, "dex": 10, "con": 21, "int": 14, "wis": 11, "cha": 19})
+        self.assertEqual(dragon["speed_modes"], {"walk": 40, "climb": 40, "fly": 80})
+        self.assertEqual(dragon["saves"], ["dex", "con", "wis", "cha"])
+        bite, claw = dragon["attacks"]
+        self.assertEqual((bite["to_hit"], bite["reach"], bite["damage"], bite["extra"]),
+                         (10, 10, "2d10+6", {"damage": "1d6", "type": "fire"}))
+        self.assertEqual((claw["to_hit"], claw["reach"], claw["damage"]), (10, 5, "2d6+6"))
+        self.assertEqual(dragon["multiattack"]["melee"], ["Bite", "Claw", "Claw"])
+        self.assertEqual(dragon["breath"], {"name": "Fire Breath", "recharge": [5, 6], "charged": True,
+                                             "range": 30, "save": "dex", "dc": 17, "damage": "16d6", "type": "fire"})
 
     def test_monster_skills_match_srd(self):
         g = srd.MONSTERS["goblin"]
@@ -1603,6 +1620,31 @@ class TacticsTests(unittest.TestCase):
         zombie = mon("zombie", id="z", pos=[11, 9], effects={"ray_of_frost": {"speed_penalty": 10}})
         plan = rules.monster_action(zombie, [zombie, w], rng=Seq())
         self.assertEqual(plan["move"]["squares"], 2)
+
+    def test_cone_uses_square_centres_and_excludes_outside_targets(self):
+        dragon = mon("young-red-dragon", id="dragon", pos=[8, 4])
+        near = pc("fighter", id="near", pos=[3, 4])
+        edge = pc("rogue", id="edge", pos=[4, 5])
+        outside = pc("wizard", id="outside", pos=[3, 8])
+        cells = rules.cone_squares(dragon, near, 6)
+        self.assertIn([2, 4], cells, "the 30-foot cone includes its six-square boundary")
+        self.assertIn([3, 4], cells)
+        self.assertEqual([c["id"] for c in rules.cone_targets(dragon, near, [dragon, near, edge, outside], 6)], ["near", "edge"])
+
+    def test_dragon_breaths_for_two_hostiles_and_multiattacks_otherwise(self):
+        dragon = mon("young-red-dragon", id="dragon", pos=[8, 4])
+        f = pc("fighter", id="f", pos=[3, 4])
+        r = pc("rogue", id="r", pos=[4, 4])
+        plan = rules.monster_action(dragon, [dragon, f, r], rng=random.Random(4))
+        self.assertEqual((plan["action"], plan["target"], plan["targets"]), ("breath", "r", ["f", "r"]))
+        dragon["breath"]["charged"] = False
+        plan = rules.monster_action(dragon, [dragon, f, r], rng=random.Random(4))
+        self.assertEqual((plan["action"], [a["attack"] for a in plan["attacks"]]),
+                         ("attack", ["Bite", "Claw", "Claw"]))
+        r["pos"] = [3, 8]
+        dragon["breath"]["charged"] = True
+        plan = rules.monster_action(dragon, [dragon, f, r], rng=random.Random(4))
+        self.assertNotEqual(plan["action"], "breath")
 
 
 class CharmTests(unittest.TestCase):

@@ -165,6 +165,18 @@ MONSTERS = {
         abilities=(19, 8, 16, 5, 7, 7), senses="darkvision 60 ft., passive Perception 8",
         attacks=[_attack("Greatclub", 6, "2d8+4", "bludgeoning"),
                  _attack("Javelin", 6, "2d6+4", "piercing", rng=(30, 120))]),
+    "young-red-dragon": _monster(
+        "young-red-dragon", "Young Red Dragon", cr="10", xp=5900, hp_formula="17d10+85", ctype="dragon", size="Large",
+        ac=18, hp=178, hit_die="d10", hit_dice_count=17, speed=40,
+        abilities=(23, 10, 21, 14, 11, 19), proficiency=4, saves=["dex", "con", "wis", "cha"],
+        attacks=[_attack("Bite", 10, "2d10+6", "piercing", reach=10,
+                         extra={"damage": "1d6", "type": "fire"}),
+                 _attack("Claw", 10, "2d6+6", "slashing")],
+        multiattack={"melee": ["Bite", "Claw", "Claw"]},
+        senses="blindsight 30 ft., darkvision 120 ft., passive Perception 10",
+        features=[_f("Fire Breath", "Recharge 5-6. The dragon exhales fire in a 30-foot cone. Each creature in that area must make a DC 17 Dexterity saving throw, taking 56 (16d6) fire damage on a failed save, or half as much damage on a successful one.")],
+        speed_modes={"walk": 40, "climb": 40, "fly": 80},
+        breath={"name": "Fire Breath", "recharge": [5, 6], "charged": True, "range": 30, "save": "dex", "dc": 17, "damage": "16d6", "type": "fire"}),
 }
 
 _SNEAK = {"damage": "2d6", "when": "sneak"}
