@@ -66,7 +66,13 @@ A refused action comes back as a result with `refused` and a `message`; the mode
 
 ## Command
 
-`/table status`, `/table map`, `/table log`, `/table recap`, `/table claim <character>`, `/table new [scene]`, `/table end`.
+`/table status`, `/table map`, `/table log`, `/table recap`, `/table claim <character>`, `/table new [scene]`, `/table end`, `/table dice phone [15-600]`, `/table dice auto`.
+
+## Throw from your phone
+
+The game master sets `/table dice phone` to wait for a player's Telegram tap, or `/table dice auto` to keep immediate engine rolls. `/table dice phone 60` sets the automatic timeout in seconds, from 15 to 600. On an eligible character roll, the character's owner sees a `🎲 Throw d20 · <character>` button in the group. Only the owner id attached to that character can use it. The board updates when the tap resolves the action. An unanswered throw is rolled by the engine after the configured timeout.
+
+The plugin registers one Telegram callback handler scoped to `^tk:throw:`. It sends one button message per pending throw through the gateway's Telegram bot. Button taps are accepted only from the character's owner id.
 
 `/table map` prints the grid in a monospace block that renders on Telegram and Discord. `/table end` ends the running combat (game master). `/table new confirm` replaces a campaign that already has characters.
 
@@ -82,7 +88,7 @@ The `tablekeeper` toolset turns on with the plugin. Requires Hermes 0.23.1 or ne
 
 - **Storage.** `<hermes home>/plugin-data/tablekeeper/campaigns.sqlite3`, resolved per profile, WAL mode, file mode 0600. The Desktop pane and dashboard route open it read-only.
 - **Prompt.** In a chat that has a campaign, and in a local CLI or Desktop session once it has used `/table` or a `tk_` tool, a compact state summary of at most about 600 tokens is added to each turn and the reply passes through the narration guard. The guard lets a reply quote any hit point or AC figure the state block listed or a tool returned, flags invented damage, rolls and hit points, and appends one compact correction line. A campaign with no table activity for 24 hours adds no prompt tokens until the next `tk_` call or `/table` command wakes it. Other sessions and chats without a campaign are untouched.
-- **Network and processes.** None. The plugin makes no network requests, starts no subprocess and reads no credentials.
+- **Network and processes.** The plugin sends its throw button through the gateway's Telegram bot and registers a scoped button callback. It starts no subprocess and reads no credentials.
 - **Identity.** Platform, chat id and sender id from the turn context, used as the campaign and owner keys.
 
 ## SRD attribution

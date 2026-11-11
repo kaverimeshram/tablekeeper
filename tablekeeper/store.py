@@ -52,6 +52,28 @@ MIGRATIONS = [
                  FROM log WHERE chat = c.chat ORDER BY seq DESC LIMIT %d) ORDER BY seq)))
     ) AS state FROM chats c;
     """ % (KEEP_ROLLS, KEEP_LOG),
+    """
+    ALTER TABLE chats ADD COLUMN dice_mode TEXT NOT NULL DEFAULT 'auto';
+    ALTER TABLE chats ADD COLUMN phone_timeout INTEGER NOT NULL DEFAULT 120;
+    ALTER TABLE chats ADD COLUMN pending_throw TEXT;
+    ALTER TABLE chats ADD COLUMN last_thrown_by TEXT NOT NULL DEFAULT 'engine';
+    DROP VIEW campaigns;
+    CREATE VIEW campaigns AS SELECT c.chat AS chat, json_object(
+      'chat', c.chat, 'gm', c.gm, 'round', c.round, 'active', c.active, 'in_combat', c.in_combat,
+      'scene', c.scene, 'updated', c.updated, 'dice_mode', c.dice_mode, 'phone_timeout', c.phone_timeout,
+      'pending_throw', json(c.pending_throw), 'last_thrown_by', c.last_thrown_by,
+      'creatures', json((SELECT json_group_array(json(data)) FROM
+                    (SELECT data FROM creatures WHERE chat = c.chat ORDER BY ord))),
+      'initiative', json((SELECT json_group_array(creature_id) FROM
+                     (SELECT creature_id FROM initiative WHERE chat = c.chat ORDER BY pos))),
+      'rolls', json((SELECT json_group_array(json(d)) FROM (SELECT d FROM
+                (SELECT seq, json_patch(data, json_object('seq', seq, 'ts', ts)) AS d
+                   FROM rolls WHERE chat = c.chat ORDER BY seq DESC LIMIT %d) ORDER BY seq))),
+      'log', json((SELECT json_group_array(json(d)) FROM (SELECT d FROM
+              (SELECT seq, json_object('seq', seq, 'ts', ts, 'kind', kind, 'text', text) AS d
+                 FROM log WHERE chat = c.chat ORDER BY seq DESC LIMIT %d) ORDER BY seq)))
+    ) AS state FROM chats c;
+    """ % (KEEP_ROLLS, KEEP_LOG),
 ]
 
 
@@ -85,6 +107,7 @@ def load(db: sqlite3.Connection, chat: str) -> dict | None:
         return None
     state = json.loads(row[0])
     state["in_combat"] = bool(state["in_combat"])
+    state["pending_throw"] = json.loads(state["pending_throw"]) if isinstance(state["pending_throw"], str) else state["pending_throw"]
     return state
 
 
@@ -102,8 +125,12 @@ def save(db: sqlite3.Connection, state: dict, *, rolls=(), log=()) -> None:
     chat, now = state["chat"], time.time()
     with db:
         cur = db.execute(
-            "UPDATE chats SET gm=?, round=?, active=?, in_combat=?, scene=?, updated=? WHERE chat=?",
-            (state["gm"], state["round"], state["active"], int(state["in_combat"]), state["scene"], now, chat))
+            "UPDATE chats SET gm=?, round=?, active=?, in_combat=?, scene=?, updated=?, dice_mode=?, phone_timeout=?, "
+            "pending_throw=?, last_thrown_by=? WHERE chat=?",
+            (state["gm"], state["round"], state["active"], int(state["in_combat"]), state["scene"], now,
+             state.get("dice_mode", "auto"), state.get("phone_timeout", 120),
+             json.dumps(state.get("pending_throw"), separators=(",", ":")) if state.get("pending_throw") else None,
+             state.get("last_thrown_by", "engine"), chat))
         if cur.rowcount != 1:
             raise KeyError(f"no campaign for chat {chat!r}")
         db.execute("DELETE FROM creatures WHERE chat=?", (chat,))

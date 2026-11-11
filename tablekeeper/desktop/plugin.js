@@ -106,6 +106,7 @@ const STYLE = `
 .tk-np{position:absolute;left:0;top:0;display:flex;gap:8px;align-items:baseline;white-space:nowrap;padding:3px 11px;border-radius:999px;background:var(--ui-accent);color:var(--ui-bg-editor);font-size:12px;will-change:transform;box-shadow:0 6px 18px -6px color-mix(in srgb,var(--ui-base) 70%,transparent)}
 .tk-np span{font-size:10.5px;opacity:.82}
 .tk-np-tip{background:var(--ui-bg-elevated);color:var(--ui-text-primary);border:1px solid var(--ui-stroke-secondary)}
+.tk-wait{position:absolute;left:0;top:0;padding:5px 10px;border-radius:999px;background:var(--ui-bg-elevated);color:var(--ui-text-primary);border:1px solid var(--ui-stroke-secondary);font-size:12px;white-space:nowrap;box-shadow:0 6px 18px -6px color-mix(in srgb,var(--ui-base) 70%,transparent)}
 .tk-dmg{position:absolute;left:0;top:0;font-size:27px;font-weight:800;letter-spacing:-.01em;will-change:transform,opacity;text-shadow:0 2px 0 var(--ui-bg-editor),0 0 14px var(--ui-bg-editor)}
 .tk-dmg-hurt{color:var(--ui-red)}
 .tk-dmg-heal{color:var(--ui-green)}
@@ -212,7 +213,8 @@ export function rollView(raw) {
     modifier: num(raw?.modifier),
     total: raw?.total == null ? null : num(raw.total),
     damageType: clip(raw?.type, 20),
-    outcome: raw?.crit || raw?.critical ? 'crit' : raw?.hit === true ? 'hit' : raw?.hit === false ? 'miss' : passed === true ? 'success' : passed === false ? 'fail' : ''
+    outcome: raw?.crit || raw?.critical ? 'crit' : raw?.hit === true ? 'hit' : raw?.hit === false ? 'miss' : passed === true ? 'success' : passed === false ? 'fail' : '',
+    thrownBy: clip(raw?.thrown_by, 12)
   }
 }
 
@@ -1402,7 +1404,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   // ---------------------------------------------------------------- scene state
   const S = {
     time: 0, minis: new Map(), chat: undefined, seq: -1, queue: [], actions: [], dice: [], nextAt: 0, floats: [], shots: [], active: '', combat: false,
-    caption: null, hover: '', tray: null, insetK: 0, insetHold: 0, frames: 0, fpsAt: 0, fps: 0, cpu: 0
+    caption: null, pendingThrow: null, hover: '', tray: null, insetK: 0, insetHold: 0, frames: 0, fpsAt: 0, fps: 0, cpu: 0
   }
   const cam = { az: HOME.az, el: HOME.el, zoom: HOME.zoom, home: homeFrame([], 1.6), cells: [], cur: { az: HOME.az, el: HOME.el, zoom: HOME.zoom, tx: 0, ty: 0.6, tz: 0, dist: 0 }, lastInput: -100, aspect: 1.6 }
   cam.cur.tx = cam.home.target[0]; cam.cur.ty = cam.home.target[1]; cam.cur.tz = cam.home.target[2]; cam.cur.dist = cam.home.dist
@@ -1418,6 +1420,8 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   const tipName = makeEl('b'), tipMeta = makeEl('span')
   tip.append(tipName, tipMeta)
   tip.style.display = 'none'
+  const wait = makeEl('div', 'tk-wait')
+  wait.style.display = 'none'
   const cap = makeEl('div', 'tk-cap')
   cap.style.display = 'none'
   const capWho = makeEl('span', 'tk-cap-who'), capVal = makeEl('b', 'tk-cap-val'), capTag = makeEl('span', 'tk-cap-tag')
@@ -1426,7 +1430,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
   const insetBox = makeEl('div', 'tk-inset')
   insetBox.append(makeEl('span', 'tk-inset-l', 'Dice tray'))
   insetBox.style.display = 'none'
-  hud.append(plate, tip, cap, hint, insetBox)
+  hud.append(plate, tip, wait, cap, hint, insetBox)
 
   const worldOf = (c, staged) => (c.pos ? cellWorld(c.pos[0], c.pos[1]) : stagedWorld(staged.indexOf(c)))
   const toneOf = name => theme[name] || TONE_FALLBACK[name] || [1, 1, 1]
@@ -1495,9 +1499,9 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     if (tray.shown) return
     tray.shown = true
     const r = tray.roll
-    capWho.textContent = [r.who, r.label || r.kind].filter(Boolean).join(' · ')
-    capVal.textContent = r.total != null ? String(r.total) : tray.made.map(d => d.value).join(' + ')
-    capTag.textContent = tray.crit ? 'natural 20' : tray.fumble ? 'natural 1' : r.outcome || ''
+    capWho.textContent = r.thrownBy === 'phone' ? `Thrown from ${r.who}'s phone` : [r.who, r.label || r.kind].filter(Boolean).join(' · ')
+    capVal.textContent = r.thrownBy === 'phone' ? `${tray.made.map(d => d.value).join(' / ')} ${r.modifier >= 0 ? '+' : '-'} ${Math.abs(r.modifier)} = ${r.total}` : r.total != null ? String(r.total) : tray.made.map(d => d.value).join(' + ')
+    capTag.textContent = r.thrownBy === 'phone' && r.outcome === 'hit' ? 'HIT' : tray.crit ? 'natural 20' : tray.fumble ? 'natural 1' : r.outcome || ''
     cap.dataset.tone = tray.crit ? 'crit' : tray.fumble ? 'fumble' : r.outcome || ''
     cap.style.display = ''
     const top = tray.made.map(d => ({ sides: d.sides, value: d.value, shows: topValue(d.shape, d.pose ? d.pose.quat : throwPose(d.plan, d.plan.dur + 1).quat) }))
@@ -1542,6 +1546,7 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
     if (chat !== S.chat) { reset(); S.chat = chat; S.fresh = true }
     const first = S.fresh
     S.fresh = false
+    S.pendingThrow = model.pendingThrow
     const staged = model.creatures.filter(c => !c.pos)
     const seen = new Set()
     const newRolls = first ? [] : model.rolls.filter(r => r.seq > S.seq)
@@ -1834,6 +1839,13 @@ export function createStage(ctx, host, canvas, hud, hooks = {}) {
       plate.style.display = p.ok ? '' : 'none'
       plate.style.transform = `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) translate(-50%, -100%)`
     } else plate.style.display = 'none'
+    const pendingMini = S.pendingThrow && [...S.minis.values()].find(m => m.c.name === S.pendingThrow.character)
+    if (pendingMini) {
+      const p = at(pendingMini, 0.4)
+      wait.textContent = `📱 Waiting for ${clip(S.pendingThrow.character, 30)} to throw · ${Math.floor(num(S.pendingThrow.secondsLeft) / 60)}:${String(num(S.pendingThrow.secondsLeft) % 60).padStart(2, '0')}`
+      wait.style.display = p.ok ? '' : 'none'
+      wait.style.transform = `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px) translate(-50%, -100%)`
+    } else wait.style.display = 'none'
     const hov = S.hover && S.hover !== S.active ? S.minis.get(S.hover) : null
     if (hov) {
       const p = at(hov, 0.18)
@@ -2190,7 +2202,9 @@ export function buildModel(campaign) {
   const order = list(campaign?.initiative).map(id => byKey.get(clip(id, 64))).filter(Boolean)
   const combat = Boolean(campaign?.in_combat) && order.length > 0
   const activeKey = combat ? clip(campaign?.active, 64) : ''
-  return { creatures, rolls, combat, activeKey, active: byKey.get(activeKey), shown: combat ? order : creatures }
+  const pending = campaign?.pending_throw
+  return { creatures, rolls, combat, activeKey, active: byKey.get(activeKey), shown: combat ? order : creatures,
+    pendingThrow: pending ? { character: clip(pending.character, 60), secondsLeft: num(pending.seconds_left) } : null }
 }
 
 let glProbe

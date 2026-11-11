@@ -6,8 +6,12 @@ structured results the tk_ tools return. Identity comes from the gateway turn co
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import json
+import logging
 import re
+import secrets
 import threading
 import time
 
@@ -26,8 +30,16 @@ DORMANT_SECONDS = 24 * 3600  # a chat with no table activity this long gets no p
 CORRECTION_ITEMS = 3
 _DBS: dict[str, object] = {}
 _TURNS: dict[str, dict] = {}
+_PHONE_NUMBERS: dict[str, set[int]] = {}
 _ACTIVE: dict[str, float] = {}  # chat -> last tk_ tool or /table use in this process
 _PLAYING: dict[str, None] = {}  # local sessions that used a tk_ tool or /table; only they get the state block
+_CTX = _TELEGRAM_APP = None
+_PREFLIGHT_CAMP = contextvars.ContextVar("tablekeeper_preflight_camp", default=None)
+_RESOLVING_THROW = contextvars.ContextVar("tablekeeper_resolving_throw", default=False)
+_ROLL_SOURCE = contextvars.ContextVar("tablekeeper_roll_source", default="engine")
+_CALLER = contextvars.ContextVar("tablekeeper_callback_caller", default=None)
+ROLL_TOOLS = {"tk_roll", "tk_check", "tk_save", "tk_attack", "tk_cast", "tk_death_save", "tk_damage", "tk_heal"}
+PHONE_TOOLS = {"tk_check", "tk_save", "tk_attack", "tk_cast", "tk_death_save"}
 # ponytail: in memory, so a resumed CLI session gets the state block again after its first tk_ call or /table use
 
 
@@ -43,6 +55,8 @@ class Refusal(Exception):
 
 def _identity(source=None, platform: str = "") -> dict:
     """Who is speaking and in which chat: the gateway turn context, or the command's source."""
+    if _CALLER.get() is not None:
+        return dict(_CALLER.get())
     unattended = False
     if source is not None:
         platform = str(getattr(getattr(source, "platform", ""), "value", getattr(source, "platform", "")) or "")
@@ -60,11 +74,12 @@ def _identity(source=None, platform: str = "") -> dict:
         if unattended:
             raise Refusal("identity_unavailable", "This turn has no identified sender and is not an interactive local session, "
                           "so no character can act and no game master power applies.")
-        return {"chat": "local:table", "user": "local", "name": "local", "local": True}
+        return {"chat": "local:table", "user": "local", "name": "local", "local": True, "platform": platform}
     if not chat_id or not user:
         raise Refusal("identity_unavailable", "The sender could not be identified, so no character can act. "
                       "Tell the player Tablekeeper needs a message from an identified user.")
-    return {"chat": f"{platform or 'unknown'}:{chat_id}", "user": user, "name": name, "local": False}
+    return {"chat": f"{platform or 'unknown'}:{chat_id}", "user": user, "name": name, "local": False,
+            "platform": platform}
 
 
 def _is_gm(camp: dict, who: dict) -> bool:
@@ -93,6 +108,9 @@ def close() -> None:
 
 
 def _load(who: dict, *, required: bool = True) -> dict | None:
+    prepared = _PREFLIGHT_CAMP.get()
+    if prepared is not None and prepared["chat"] == who["chat"]:
+        return prepared
     camp = store.load(_db(), who["chat"])
     if camp is None:
         if required:
@@ -103,8 +121,13 @@ def _load(who: dict, *, required: bool = True) -> dict | None:
 
 
 def _save(camp: dict) -> None:
+    if _PREFLIGHT_CAMP.get() is camp:
+        return
     for c in camp["creatures"]:
         c["status"] = rules.state(c)
+    d20 = next((r for r in reversed(camp["_rolls"]) if "natural" in r), None)
+    if d20:
+        camp["last_thrown_by"] = d20.get("thrown_by", "engine")
     store.save(_db(), camp, rolls=camp.pop("_rolls"), log=camp.pop("_log"))
 
 
@@ -247,6 +270,7 @@ def _rec_roll(camp: dict, c, kind: str, why: str, rolled: dict, **extra) -> None
 
 
 def _rec_d20(camp: dict, c, kind: str, why: str, d: dict, bonus: int, total, **extra) -> None:
+    extra.setdefault("thrown_by", "engine")
     _rec(camp, c, kind, why, dice=d["dice"], total=total, modifier=bonus, formula=f"1d20{bonus:+d}",
          natural=d["natural"], **extra)
 
@@ -263,6 +287,14 @@ def _new_turn() -> dict:
 def _brief(c: dict) -> dict:
     keys = ("id", "name", "kind", "owner", "hp", "max_hp", "temp_hp", "ac", "pos", "status", "conditions", "speed")
     return {**{k: c[k] for k in keys}, "status": rules.state(c), "square": _label(c["pos"])}
+
+
+def _pending_view(camp: dict) -> dict | None:
+    pending = camp.get("pending_throw")
+    if not pending:
+        return None
+    return {"character": pending["character"], "owner": pending["owner_name"], "kind": pending["kind"],
+            "seconds_left": max(0, int(pending["created_at"] + camp.get("phone_timeout", 120) - time.time()))}
 
 
 # ---------------------------------------------------------------- attacks and damage
@@ -300,10 +332,10 @@ def _close_if_over(camp: dict) -> dict:
     return {"combat_over": _finish(camp, done)} if done else {}
 
 
-def _report_attack(camp: dict, att: dict, tgt: dict, atk: dict, res: dict, dist: int) -> dict:
+def _report_attack(camp: dict, att: dict, tgt: dict, atk: dict, res: dict, dist: int, thrown_by="engine") -> dict:
     d = res["attack_roll"]
     _rec_d20(camp, att, "attack", f"{atk['name']} vs {tgt['name']}", d, res["bonus"], res["to_hit"], hit=res["hit"],
-             crit=res["critical"], target=tgt["id"], dc=res["ac"])
+             crit=res["critical"], target=tgt["id"], dc=res["ac"], thrown_by=thrown_by)
     out = {"attacker": att["id"], "target": tgt["id"], "attack": atk["name"], "melee": res["melee"], "distance_ft": dist,
            "natural": d["natural"], "attack_total": res["to_hit"], "target_ac": res["ac"], "hit": res["hit"],
            "critical": res["critical"], "notes": list(res["notes"])}
@@ -333,7 +365,8 @@ def _strike(camp: dict, att: dict, tgt: dict, atk: dict, *, melee: bool, dist: i
                for o in camp["creatures"])
     res = rules.resolve_attack(att, tgt, atk, melee=melee, cover=cover, rng=RNG, advantage=advantage,
                                disadvantage=disadvantage, ally_adjacent=ally, in_melee=bool(_engaged(camp, att)), apply=True)
-    return _report_attack(camp, att, tgt, atk, res, dist)
+    source = _ROLL_SOURCE.get() if att["kind"] == "pc" else "engine"
+    return _report_attack(camp, att, tgt, atk, res, dist, source)
 
 
 # ---------------------------------------------------------------- monster and turn flow
@@ -441,9 +474,24 @@ def _canonical(args: dict) -> dict:
 def _tool(fn):
     """Serialise a tool body and return rule refusals and bad input as explicit JSON results."""
     def handler(args, **_ctx):
+        args = _canonical(args) if isinstance(args, dict) else {}
         try:
             with LOCK:
-                result = fn(_canonical(args) if isinstance(args, dict) else {})
+                who = _identity()
+                _expire_pending(who["chat"])
+                camp = _load(who, required=False)
+                if camp and camp.get("pending_throw") and fn.__name__ in ROLL_TOOLS and not _RESOLVING_THROW.get():
+                    result = {"ok": False, "error": f"waiting for {camp['pending_throw']['character']} to throw"}
+                elif camp and camp.get("pending_throw") and fn.__name__ == "tk_next_turn":
+                    result = {"ok": False, "error": f"waiting for {camp['pending_throw']['character']} to throw"}
+                else:
+                    result = _prepare_throw(fn, args, who, camp, _ctx.get("session_id", "")) if fn.__name__ in PHONE_TOOLS and not _RESOLVING_THROW.get() else None
+                    if result is None:
+                        result = fn(args)
+                    elif result.get("fallback"):
+                        fallback = result.pop("fallback")
+                        result = fn(args)
+                        result["note"] = fallback
         except Refusal as r:
             result = {"ok": False, "refused": r.code, "message": r.message, **r.extra}
         except rules.RuleError as e:
@@ -451,6 +499,73 @@ def _tool(fn):
         return json.dumps(result, ensure_ascii=False, default=str)
     handler.__name__ = fn.__name__
     return handler
+
+
+class _ValidationRng:
+    def randint(self, lo, _hi):
+        return lo
+
+
+def _prepare_throw(fn, args: dict, who: dict, camp: dict | None, session_id: str = "") -> dict | None:
+    if not camp or camp.get("dice_mode") != "phone":
+        return None
+    if who.get("platform") != "telegram" or _TELEGRAM_APP is None:
+        return {"fallback": "Phone throw unavailable in this session; the engine rolled automatically."}
+    if camp.get("pending_throw"):
+        return {"ok": False, "error": f"waiting for {camp['pending_throw']['character']} to throw"}
+    clone = json.loads(json.dumps(camp))
+    clone["_rolls"], clone["_log"] = [], []
+    token = _PREFLIGHT_CAMP.set(clone)
+    old_rng = RNG
+    try:
+        globals()["RNG"] = _ValidationRng()
+        checked = fn(args)
+    finally:
+        globals()["RNG"] = old_rng
+        _PREFLIGHT_CAMP.reset(token)
+    if not checked.get("ok"):
+        return checked
+    char_id = checked.get("character") or checked.get("attacker")
+    char = _by_id(camp).get(char_id)
+    if not char or char["kind"] != "pc" or char["owner"] != who["user"]:
+        return None
+    cost = "action" if fn.__name__ == "tk_attack" else None
+    if fn.__name__ == "tk_cast":
+        spell = srd.SPELLS[_text(args, "spell", limit=40).lower().replace("_", " ")]
+        cost = {"action": "action", "bonus action": "bonus", "reaction": "reaction"}[spell["casting_time"]]
+    if camp["in_combat"] and cost and cost in char["turn"]:
+        char["turn"][cost] = True
+    pending = {"id": secrets.token_hex(4), "char_id": char_id, "character": char["name"],
+               "owner": char["owner"], "owner_name": who["name"], "kind": fn.__name__[3:],
+               "tool": fn.__name__, "args": args, "cost": cost, "created_at": time.time(),
+               "chat": camp["chat"], "session_id": session_id, "message_id": None,
+               "chat_id": camp["chat"].split(":", 1)[1]}
+    camp["pending_throw"] = pending
+    _save(camp)
+    _schedule(_post_throw_button(pending))
+    return {"ok": True, "pending_throw": pending["id"], "waiting_for": char["name"],
+            "note": f"{char['name']} throws from their phone; narrate nothing until the result arrives"}
+
+
+def _schedule(coro):
+    try:
+        app = _TELEGRAM_APP
+        if app is None or not hasattr(app, "create_task"):
+            coro.close()
+            return
+        task = app.create_task(coro)
+        def report(done):
+            try:
+                error = done.exception()
+            except asyncio.CancelledError:
+                return
+            if error:
+                logging.getLogger(__name__).error("Tablekeeper Telegram task failed",
+                                                   exc_info=(type(error), error, error.__traceback__))
+        task.add_done_callback(report)
+    except Exception:
+        coro.close()
+        logging.getLogger(__name__).exception("Tablekeeper could not schedule Telegram work")
 
 
 def _text(args: dict, key: str, *, required: bool = True, limit: int = 200) -> str:
@@ -571,6 +686,10 @@ def _state(camp: dict, who: dict) -> dict:
     return {"chat": camp["chat"], "scene": camp["scene"], "round": camp["round"], "in_combat": camp["in_combat"],
             "active": camp["active"], "initiative": camp["initiative"], "you_control": mine,
             "you_are_game_master": _is_gm(camp, who),
+            "dice_mode": camp.get("dice_mode", "auto"),
+            "phone_timeout": camp.get("phone_timeout", 120),
+            "last_thrown_by": camp.get("last_thrown_by", "engine"),
+            "pending_throw": _pending_view(camp),
             "grid": {"width": GRID_W, "height": GRID_H, "feet_per_square": FEET, "columns": f"A-{chr(64 + GRID_W)}",
                      "rows": f"1-{GRID_H}", "squares": "name a square by its label such as C4; pos is [column letter index from A=0, row number minus 1]"},
             "creatures": [{**_brief(c), "attacks": [a["name"] for a in c["attacks"]], "spells": c["spells"],
@@ -602,7 +721,8 @@ def tk_roll(args):
 
 def _roll_result(camp: dict, c: dict, kind: str, label: str, res: dict) -> dict:
     if res["total"] is not None:
-        _rec_d20(camp, c, kind, label, res, res["bonus"], res["total"], dc=res["dc"], success=res["success"])
+        _rec_d20(camp, c, kind, label, res, res["bonus"], res["total"], dc=res["dc"], success=res["success"],
+                 thrown_by=_ROLL_SOURCE.get())
     versus = f" vs DC {res['dc']}: {'success' if res['success'] else 'failure'}" if res["dc"] else ""
     _log(camp, kind, f"{c['name']} {label} {res['total']}{versus}.")
     return _ok(character=c["id"], **res)
@@ -768,7 +888,8 @@ def _record_cast(camp: dict, caster: dict, spell: str, results: list[dict]) -> N
         if e.get("attack_roll"):
             natural = e["attack_roll"]["natural"]
             _rec_d20(camp, caster, "attack", f"{spell} vs {tgt['name']}", e["attack_roll"], e["to_hit"] - natural, e["to_hit"],
-                     hit=e["hit"], crit=e["critical"], target=tgt["id"], dc=e["ac"])
+                     hit=e["hit"], crit=e["critical"], target=tgt["id"], dc=e["ac"],
+                     thrown_by=_ROLL_SOURCE.get() if caster["kind"] == "pc" else "engine")
         if e.get("save"):
             _rec_save(camp, tgt, f"{spell} save", e["save"])
         for r in (e.get("damage") or {}).get("rolls", []):
@@ -976,7 +1097,7 @@ def tk_death_save(args):
         raise Refusal("not_your_turn", f"{c['name']} rolls death saves on their own turn.", active=camp["active"])
     res = rules.death_save(c, rng=RNG)
     _rec(camp, c, "death", "death saving throw", dice=res["dice"], total=res["natural"], natural=res["natural"],
-         outcome=res["outcome"])
+         outcome=res["outcome"], thrown_by=_ROLL_SOURCE.get())
     _log(camp, "death", f"{c['name']} death save {res['natural']}: {res['outcome'].replace('_', ' ')} "
          f"({res['successes']} successes, {res['failures']} failures).")
     extra = {}
@@ -1077,6 +1198,7 @@ def _command(raw_args: str, *, platform: str = "", source=None, session_id: str 
         with LOCK:
             who = _identity(source=source, platform=platform)
             _touch(who["chat"])
+            _expire_pending(who["chat"])
             if sub == "new":
                 confirmed, scene = rest.split(" ", 1)[0] == "confirm", rest.removeprefix("confirm").strip()
                 old = store.load(_db(), who["chat"])
@@ -1086,6 +1208,17 @@ def _command(raw_args: str, *, platform: str = "", source=None, session_id: str 
                 _new_campaign(who, scene[:500], True)
                 return "Campaign started. Players claim a character with /table claim <fighter|rogue|wizard|cleric>."
             camp = _load(who)
+            if sub == "dice":
+                mode, _, timeout = rest.partition(" ")
+                mode = mode.lower()
+                if mode not in ("phone", "auto"):
+                    return "Usage: /table dice phone [15-600]|auto"
+                _need_gm(camp, who, "change the dice mode")
+                camp["dice_mode"] = mode
+                if mode == "phone" and timeout:
+                    camp["phone_timeout"] = _int({"timeout": timeout}, "timeout", 120, 15, 600)
+                _save(camp)
+                return f"Dice mode: {mode}" + (f" (timeout {camp['phone_timeout']} s)" if mode == "phone" else ".")
             if sub == "claim":
                 claimed = _claim(camp, who, rest)
                 _save(camp)
@@ -1103,7 +1236,7 @@ def _command(raw_args: str, *, platform: str = "", source=None, session_id: str 
                 return "\n".join([f"Scene: {r['scene']}" if r["scene"] else "Recap", _status_text(camp), *r["events"]])
             if sub == "status":
                 return _status_text(camp)
-            return "Usage: /table status|map|log|recap|claim <character>|new [scene]|end"
+            return "Usage: /table status|map|log|recap|claim <character>|new [scene]|end|dice phone [15-600]|auto"
     except Refusal as r:
         return r.message
 
@@ -1159,7 +1292,7 @@ def _turn_hook(session_id: str = "", **_kw):
         return None  # dormant campaigns cost no prompt tokens; a tk_ call or /table wakes them
     if len(_TURNS) > 64:
         _TURNS.pop(next(iter(_TURNS)))
-    _TURNS[session_id] = {"chat": who["chat"], "numbers": set(), "start": camp}
+    _TURNS[session_id] = {"chat": who["chat"], "numbers": _PHONE_NUMBERS.pop(who["chat"], set()), "start": camp}
     return {"context": _context_text(camp, who)}
 
 
@@ -1293,13 +1426,171 @@ TOOLS = [
     ("tk_recap", tk_recap, "Get the story so far: scene, party, foes and the last 30 logged events, for a previously-on summary.", _obj()),
 ]
 
+_HANDLERS = {name: handler for name, handler, _, _ in TOOLS}
+
+
+async def _post_throw_button(pending: dict) -> None:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    sent = await _TELEGRAM_APP.bot.send_message(
+        chat_id=pending["chat_id"],
+        text=f"{pending['character']} is ready to throw.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+            f"🎲 Throw d20 · {pending['character']}", callback_data=f"tk:throw:{pending['id']}")]]))
+    with LOCK:
+        camp = store.load(_db(), pending["chat"])
+        if camp and (camp.get("pending_throw") or {}).get("id") == pending["id"]:
+            camp["pending_throw"]["message_id"] = sent.message_id
+            camp["_rolls"], camp["_log"] = [], []
+            _save(camp)
+
+
+def _throw_caption(pending: dict, result: dict, source: str) -> str:
+    name = pending["character"]
+    if "attack_total" in result:
+        bonus = result.get("attack_total", 0) - result["natural"]
+        text = (f"🎲 {name} threw {result['natural']} {'+' if bonus >= 0 else '-'} {abs(bonus)} "
+                f"= {result['attack_total']} vs AC {result['target_ac']}: "
+                f"{'HIT' if result['hit'] else 'MISS'}")
+        if result.get("damage") is not None:
+            text += f", {result['damage']} damage"
+    else:
+        natural, bonus = result.get("natural"), result.get("bonus", 0)
+        total = result.get("total", natural)
+        text = f"🎲 {name} threw {natural} {'+' if bonus >= 0 else '-'} {abs(bonus)} = {total}"
+        if result.get("dc"):
+            text += f" vs DC {result['dc']}: {'success' if result.get('success') else 'failure'}"
+    if source == "auto":
+        text += f" · auto-thrown after {int(time.time() - pending['created_at'])} s"
+    return text
+
+
+def _notify_result(pending: dict, text: str) -> None:
+    if _CTX is None:
+        raise RuntimeError("Tablekeeper has no plugin context for the throw result")
+    origin = {"platform": "telegram", "chat_id": pending["chat_id"], "chat_type": "group",
+              "user_id": pending["owner"], "user_name": pending["owner_name"]}
+    if _CTX.inject_message(text, role="user", origin=origin):
+        return
+    fallback = _CTX.post_message(text)
+    ok = getattr(fallback, "ok", fallback.get("ok") if isinstance(fallback, dict) else False)
+    if not ok:
+        raise RuntimeError(f"Tablekeeper could not wake the session: {getattr(fallback, 'result', fallback)}")
+
+
+def _resolve_throw(chat: str, throw_id: str, source: str) -> tuple[dict, dict] | None:
+    with LOCK:
+        camp = store.load(_db(), chat)
+        pending = camp.get("pending_throw") if camp else None
+        if not pending or pending["id"] != throw_id:
+            return None
+        camp["pending_throw"] = None
+        char = _by_id(camp).get(pending["char_id"])
+        if char and pending.get("cost") and char["turn"].get(pending["cost"]):
+            char["turn"][pending["cost"]] = False
+        camp["_rolls"], camp["_log"] = [], []
+        _save(camp)
+        caller = _CALLER.set({"chat": chat, "user": pending["owner"], "name": pending["owner_name"],
+                              "local": False, "platform": "telegram"})
+        resolving = _RESOLVING_THROW.set(True)
+        roll_source = _ROLL_SOURCE.set(source)
+        try:
+            result = json.loads(_HANDLERS[pending["tool"]](pending["args"]))
+        finally:
+            _ROLL_SOURCE.reset(roll_source)
+            _RESOLVING_THROW.reset(resolving)
+            _CALLER.reset(caller)
+        result["thrown_by"] = source
+        numbers = set()
+        _numbers(result, numbers)
+        _PHONE_NUMBERS[chat] = numbers
+        if source == "auto":
+            result["note"] = f"auto-thrown after {int(time.time() - pending['created_at'])} s"
+        return pending, result
+
+
+def _expire_pending(chat: str) -> None:
+    with LOCK:
+        camp = store.load(_db(), chat)
+        pending = camp.get("pending_throw") if camp else None
+        if not pending or time.time() < pending["created_at"] + camp.get("phone_timeout", 120):
+            return
+    resolved = _resolve_throw(chat, pending["id"], "auto")
+    if not resolved:
+        return
+    pending, result = resolved
+    text = _throw_caption(pending, result, "auto")
+    if pending.get("message_id") and _TELEGRAM_APP is not None:
+        _schedule(_TELEGRAM_APP.bot.edit_message_text(chat_id=pending["chat_id"],
+                                                     message_id=pending["message_id"], text=text))
+    _notify_result(pending, json.dumps(result, ensure_ascii=False))
+
+
+async def _expiry_loop() -> None:
+    while True:
+        await asyncio.sleep(5)
+        for chat in store.chats(_db()):
+            _expire_pending(chat)
+
+
+def _telegram_factory(application, _adapter):
+    global _TELEGRAM_APP
+    if application is None:
+        return
+    from telegram.ext import CallbackQueryHandler
+    _TELEGRAM_APP = application
+
+    async def on_throw(update, _context):
+        query = update.callback_query
+        data = str(query.data or "")
+        throw_id = data.rsplit(":", 1)[-1]
+        chat_id = str(query.message.chat_id)
+        chat = f"telegram:{chat_id}"
+        refusal = None
+        with LOCK:
+            camp = store.load(_db(), chat)
+            pending = camp.get("pending_throw") if camp else None
+            if not pending or pending["id"] != throw_id:
+                refusal = "This throw is done."
+            elif str(query.from_user.id) != str(pending["owner"]):
+                refusal = f"Not your die. {pending['owner_name']} throws for {pending['character']}."
+        if refusal:
+            await query.answer(refusal, show_alert=False)
+            return
+        resolved = _resolve_throw(chat, throw_id, "phone")
+        if not resolved:
+            await query.answer("This throw is done.", show_alert=False)
+            return
+        pending, result = resolved
+        await query.answer()
+        caption = _throw_caption(pending, result, "phone")
+        await query.edit_message_text(caption)
+        _notify_result(pending, json.dumps(result, ensure_ascii=False))
+
+    application.add_handler(CallbackQueryHandler(on_throw, pattern=r"^tk:throw:[0-9a-f]{8}$"))
+    if _CTX is not None:
+        try:
+            _CTX.spawn_task(_expiry_loop(), name="tablekeeper-phone-throw-expiry")
+        except RuntimeError:
+            logging.getLogger(__name__).exception("Tablekeeper expiry task could not start")
+
+
+def _unload() -> None:
+    global _CTX, _TELEGRAM_APP
+    _CTX = _TELEGRAM_APP = None
+    _PHONE_NUMBERS.clear()
+
 
 def register(ctx):
+    global _CTX
+    _CTX = ctx
     for name, handler, description, schema in TOOLS:
         ctx.register_tool(name=name, toolset="tablekeeper", schema={"name": name, "description": description, "parameters": schema},
                           handler=handler, description=description)
     ctx.register_hook("pre_llm_call", _turn_hook)
     ctx.register_hook("post_tool_call", _collect)
     ctx.register_hook("transform_llm_output", _guard)
+    ctx.register_telegram_handler(_telegram_factory)
+    ctx.on_unload(_unload)
     ctx.register_command("table", _command, description="Tablekeeper campaign",
                          args_hint="status|map|log|recap|claim <character>|new [scene]|end")

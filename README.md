@@ -26,6 +26,10 @@ You:      I attack Goblin 3 with my longsword.
 Hermes:   Longsword attack on Goblin 3 (5 ft, melee): natural 11 (total 16) vs AC 15, HIT for 12 slashing damage. Goblin 3 is slain.
 ```
 
+## Throw from your phone
+
+The game master can set `/table dice phone` to wait for each player's Telegram tap, or `/table dice auto` to roll immediately. A player whose character is taking a turn gets one `🎲 Throw d20` button in the group. Their tap resolves the same rules-engine action and updates the shared tabletop. If the player does not tap within 120 seconds, the engine rolls automatically.
+
 ## Install
 
 ```bash

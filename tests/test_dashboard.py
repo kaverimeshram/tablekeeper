@@ -12,6 +12,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -90,6 +91,25 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(got["rolls"][0]["total"], 22)
         self.assertEqual(got["log"][0]["text"], "Brann hits Goblin")
         self.assertEqual(got["creatures"][0]["pos"], [2, 3])
+
+    def test_phone_throw_projection_hides_callback_and_action_data(self):
+        self.seed()
+        db = self.store.connect(self.db_path)
+        state = self.store.load(db, "telegram:42")
+        state["pending_throw"] = {"id": "deadbeef", "char_id": "fighter", "character": "Brann",
+                                  "owner": "1001", "owner_name": "Ann", "kind": "attack",
+                                  "args": {"target": "goblin-1"}, "created_at": time.time(),
+                                  "chat": "telegram:42"}
+        state["last_thrown_by"] = "phone"
+        self.store.save(db, state)
+        db.close()
+        got = self.client.get(f"{self.base}/campaign").json()["campaign"]
+        self.assertEqual(got["last_thrown_by"], "phone")
+        self.assertEqual({k: got["pending_throw"][k] for k in ("character", "owner", "kind")},
+                         {"character": "Brann", "owner": "Ann", "kind": "attack"})
+        self.assertGreaterEqual(got["pending_throw"]["seconds_left"], 0)
+        self.assertNotIn("id", got["pending_throw"])
+        self.assertNotIn("args", got["pending_throw"])
 
     def test_chat_selection_latest_default_and_unknown_chat(self):
         self.seed("telegram:1", scene="First")

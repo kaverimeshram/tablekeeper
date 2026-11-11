@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -79,8 +80,14 @@ def campaign(chat: str | None = Query(None, max_length=256)):
     with closing(db):
         if chat is None:
             known = store.chats(db)
-            return {"campaign": store.load(db, known[0]) if known else None}
-        state = store.load(db, chat)
+            state = store.load(db, known[0]) if known else None
+        else:
+            state = store.load(db, chat)
     if state is None:
         raise HTTPException(404, "No campaign for that chat")
+    pending = state.get("pending_throw")
+    state["pending_throw"] = ({"character": pending["character"], "owner": pending["owner_name"],
+                               "kind": pending["kind"],
+                               "seconds_left": max(0, int(pending["created_at"] + state.get("phone_timeout", 120)
+                                                            - time.time()))} if pending else None)
     return {"campaign": state}
